@@ -47,6 +47,15 @@ input {
   border: 1px solid #ced4da;
 }
 
+input[type="date"] {
+  padding: 0.25rem 0.35rem;
+}
+
+input[type="number"] {
+  padding: 0.25rem 0.35rem;
+  width: 8.5rem;
+}
+
 select {
   padding: 0.4rem 0.5rem;
   border-radius: 4px;
@@ -74,6 +83,11 @@ button {
 
 button:hover {
   background: #0b5ed7;
+}
+
+button:disabled {
+  background: #6c757d;
+  cursor: not-allowed;
 }
 
 .data-table {

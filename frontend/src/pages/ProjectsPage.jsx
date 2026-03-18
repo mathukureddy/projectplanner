@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { fetchProjects, createProject } from "../api.js";
+import { fetchProjects, createProject, deleteProject } from "../api.js";
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState([]);
   const [name, setName] = useState("");
   const [status, setStatus] = useState("On Track");
-  const [tasksText, setTasksText] = useState("");
+  const [firstTaskName, setFirstTaskName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [deletingProjectKey, setDeletingProjectKey] = useState(null);
   const [error, setError] = useState("");
   const navigate = useNavigate();
 
@@ -27,33 +29,54 @@ export default function ProjectsPage() {
 
   async function handleCreate(e) {
     e.preventDefault();
+    if (creating) return;
     if (!name.trim()) return;
-    const taskNames = tasksText
-      .split("\n")
-      .map((t) => t.trim())
-      .filter(Boolean);
-    if (taskNames.length < 1) {
-      setError("Please add at least one task (one task per line) before creating the project");
+    setCreating(true);
+    if (!firstTaskName.trim()) {
+      setError("Please add the first task name before creating the project");
+      setCreating(false);
       return;
     }
     setError("");
     try {
-      const tasks = taskNames.map((taskName) => ({ name: taskName }));
       const project = await createProject({
         name,
         status,
-        tasks
+        tasks: [{ name: firstTaskName.trim() }]
       });
+      const projectId = project.id || project._id;
       setName("");
-      setTasksText("");
+      setFirstTaskName("");
       setProjects((prev) => [...prev, project]);
-      navigate(`/projects/${project.id}`);
+      navigate(`/projects/${projectId}`);
     } catch (err) {
       const message =
         err?.response?.data?.detail ||
         err?.message ||
         "Unable to create project";
       setError(message);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleDelete(projectKey) {
+    if (deletingProjectKey) return;
+    const ok = window.confirm("Delete this project and all its tasks?");
+    if (!ok) return;
+
+    try {
+      setDeletingProjectKey(projectKey);
+      await deleteProject(projectKey);
+      setProjects((prev) => prev.filter((p) => (p.id || p._id) !== projectKey));
+    } catch (err) {
+      const message =
+        err?.response?.data?.detail ||
+        err?.message ||
+        "Unable to delete project";
+      setError(message);
+    } finally {
+      setDeletingProjectKey(null);
     }
   }
 
@@ -71,12 +94,14 @@ export default function ProjectsPage() {
           <option value="At Risk">At Risk</option>
           <option value="Off Track">Off Track</option>
         </select>
-        <textarea
-          placeholder={"Tasks (one per line):\n- Task A\n- Task B"}
-          value={tasksText}
-          onChange={(e) => setTasksText(e.target.value)}
+        <input
+          placeholder="First task name (required)"
+          value={firstTaskName}
+          onChange={(e) => setFirstTaskName(e.target.value)}
         />
-        <button type="submit">Add</button>
+        <button type="submit" disabled={creating}>
+          {creating ? "Creating..." : "Add"}
+        </button>
       </form>
       {error ? <p style={{ color: "crimson" }}>{error}</p> : null}
       {loading ? (
@@ -87,13 +112,31 @@ export default function ProjectsPage() {
             <tr>
               <th>Name</th>
               <th>Status</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {projects.map((p) => (
-              <tr key={p.id} onClick={() => navigate(`/projects/${p.id}`)}>
+              <tr
+                key={p.id || p._id}
+                onClick={() => navigate(`/projects/${p.id || p._id}`)}
+              >
                 <td>{p.name}</td>
                 <td>{p.status}</td>
+                <td>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDelete(p.id || p._id);
+                    }}
+                    disabled={deletingProjectKey === (p.id || p._id)}
+                  >
+                    {deletingProjectKey === (p.id || p._id)
+                      ? "Deleting..."
+                      : "Delete"}
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>

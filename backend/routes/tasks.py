@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 from bson import ObjectId
 from pymongo.errors import PyMongoError
 
-from db import get_database
+from db import get_database, normalize_document, apply_status_completion_rules
 from models import Task, TaskCreate, TaskUpdate
 
 
@@ -13,7 +13,9 @@ router = APIRouter()
 
 
 def _serialize_task(doc: dict) -> Task:
-    doc["_id"] = str(doc["_id"])
+    # Mongo stores document id in `_id`. Expose it as `id` for the frontend.
+    doc["id"] = str(doc["_id"])
+    doc.pop("_id", None)
     return Task(**doc)
 
 
@@ -30,7 +32,7 @@ async def list_tasks(project_id: str = Query(..., description="Filter by project
 async def create_task(payload: TaskCreate) -> Task:
     db = get_database()
     now = datetime.utcnow()
-    doc = payload.model_dump()
+    doc = apply_status_completion_rules(normalize_document(payload.model_dump()))
     doc.update({"created_at": now, "updated_at": now})
     try:
         result = await db["tasks"].insert_one(doc)
@@ -60,7 +62,9 @@ async def update_task(task_id: str, payload: TaskUpdate) -> Task:
         oid = ObjectId(task_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid task id")
-    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    updates = apply_status_completion_rules(
+        normalize_document({k: v for k, v in payload.model_dump(exclude_unset=True).items()})
+    )
     if not updates:
         doc = await db["tasks"].find_one({"_id": oid})
         if not doc:

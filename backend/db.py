@@ -1,4 +1,5 @@
 import os
+from datetime import date, datetime
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
@@ -31,4 +32,42 @@ def get_database() -> AsyncIOMotorDatabase:
 async def get_collection(name: str) -> Any:
     db = get_database()
     return db[name]
+
+
+def normalize_dates(value: Any) -> Any:
+    """
+    Convert `datetime.date` into `datetime` so Mongo (bson encoder) can persist it.
+    Mongo can encode `datetime` but not plain `datetime.date`.
+    """
+    if isinstance(value, date) and not isinstance(value, datetime):
+        # Store at midnight (local/naive) to keep dates stable.
+        return datetime(value.year, value.month, value.day)
+    return value
+
+
+def normalize_document(doc: dict) -> dict:
+    """Recursively normalize date objects inside a document dict."""
+    normalized: dict[str, Any] = {}
+    for k, v in doc.items():
+        if isinstance(v, dict):
+            normalized[k] = normalize_document(v)
+        elif isinstance(v, list):
+            normalized[k] = [normalize_dates(i) for i in v]
+        else:
+            normalized[k] = normalize_dates(v)
+    return normalized
+
+
+def apply_status_completion_rules(doc: dict) -> dict:
+    """
+    Smartsheet-like rule:
+    - `Not Started` => percent_complete = 0
+    - `Complete` => percent_complete = 100
+    """
+    status = doc.get("status")
+    if status == "Not Started":
+        doc["percent_complete"] = 0
+    elif status == "Complete":
+        doc["percent_complete"] = 100
+    return doc
 

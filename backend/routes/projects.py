@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 from bson import ObjectId
 from pymongo.errors import PyMongoError
 
-from db import get_database
+from db import get_database, normalize_document, apply_status_completion_rules
 from models import Project, ProjectCreateWithTasks, ProjectUpdate
 
 
@@ -13,7 +13,9 @@ router = APIRouter()
 
 
 def _serialize_project(doc: dict) -> Project:
-    doc["_id"] = str(doc["_id"])
+    # Mongo stores document id in `_id`. Expose it as `id` for the frontend.
+    doc["id"] = str(doc["_id"])
+    doc.pop("_id", None)
     return Project(**doc)
 
 
@@ -32,7 +34,7 @@ async def create_project(payload: ProjectCreateWithTasks) -> Project:
     now = datetime.utcnow()
     payload_data = payload.model_dump()
     tasks = payload_data.pop("tasks")
-    doc = payload_data
+    doc = normalize_document(payload_data)
     doc.update({"created_at": now, "updated_at": now})
     try:
         existing = await db["projects"].find_one({"name": payload.name})
@@ -45,7 +47,7 @@ async def create_project(payload: ProjectCreateWithTasks) -> Project:
         for t in tasks:
             task_docs.append(
                 {
-                    **t,
+                    **apply_status_completion_rules(normalize_document(t)),
                     "project_id": project_id,
                     "created_at": now,
                     "updated_at": now,
@@ -84,7 +86,7 @@ async def update_project(project_id: str, payload: ProjectUpdate) -> Project:
         oid = ObjectId(project_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid project id")
-    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    updates = normalize_document({k: v for k, v in payload.model_dump(exclude_unset=True).items()})
     if not updates:
         doc = await db["projects"].find_one({"_id": oid})
         if not doc:

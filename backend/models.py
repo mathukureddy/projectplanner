@@ -49,12 +49,9 @@ class TaskUpdate(BaseModel):
 
 
 class Task(TaskBase):
-    id: str = Field(alias="_id")
+    id: str
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        populate_by_name = True
 
 
 class ProjectBase(BaseModel):
@@ -86,10 +83,7 @@ class ProjectUpdate(BaseModel):
 
 
 class Project(ProjectBase):
-    id: str = Field(alias="_id")
+    id: str
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        populate_by_name = True
 
