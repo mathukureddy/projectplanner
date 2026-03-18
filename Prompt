@@ -1,0 +1,6 @@
+create an application supporting all features mentioned in SmartSheet_features.md file
+Use Python to create backend part of the application
+Use React for frontend part of the application
+Create a Smartsheet template as Project-Template file as an outcome of the application with all features
+Template to be used for any new project creation and project details and its state along with planned completion dates can be saved in No-SQL database
+Create Unit test cases for the functinaloties built 

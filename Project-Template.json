@@ -1,0 +1,34 @@
+{
+  "name": "ProjectPlanning Template",
+  "description": "Smartsheet-style project template with core columns and views.",
+  "columns": [
+    { "name": "Task Name", "type": "text" },
+    { "name": "Start Date", "type": "date" },
+    { "name": "End Date", "type": "date" },
+    { "name": "Duration (days)", "type": "number" },
+    { "name": "Assigned To", "type": "contact" },
+    { "name": "Status", "type": "status", "values": ["Not Started", "In Progress", "Complete", "Blocked"] },
+    { "name": "% Complete", "type": "percent" },
+    { "name": "Predecessors", "type": "text" },
+    { "name": "Parent Task Id", "type": "text" }
+  ],
+  "views": [
+    { "name": "Grid", "type": "grid", "primary": true },
+    { "name": "Gantt", "type": "gantt", "dateStartColumn": "Start Date", "dateEndColumn": "End Date" },
+    { "name": "Card", "type": "card", "groupBy": "Status" },
+    { "name": "Calendar", "type": "calendar", "dateColumn": "End Date" }
+  ],
+  "automations": [
+    {
+      "name": "Notify on completion",
+      "trigger": { "type": "status-changed", "from": "*", "to": "Complete" },
+      "action": { "type": "notify-owner" }
+    },
+    {
+      "name": "Overdue alert",
+      "trigger": { "type": "date-passed", "column": "End Date", "condition": "today>End Date", "statusNot": "Complete" },
+      "action": { "type": "flag-overdue" }
+    }
+  ]
+}
+
