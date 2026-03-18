@@ -22,3 +22,9 @@ Thumbs.db
 .idea/
 *.log
 
+# Docs/artifacts
+*.pdf
+
+# Office temp files (ex: ~$something.docx)
+~$*
+
