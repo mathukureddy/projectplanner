@@ -38,7 +38,16 @@ export async function updateTask(taskId, payload) {
   return res.data;
 }
 
+export async function deleteTask(taskId) {
+  await api.delete(`/tasks/${taskId}`);
+}
+
 export async function deleteProject(projectId) {
   await api.delete(`/projects/${projectId}`);
+}
+
+export async function snapshotProjectBaseline(projectId) {
+  const res = await api.post(`/projects/${projectId}/baseline/snapshot`);
+  return res.data;
 }
 

@@ -14,6 +14,18 @@ router = APIRouter()
 
 def _serialize_project(doc: dict) -> Project:
     # Mongo stores document id in `_id`. Expose it as `id` for the frontend.
+    if doc.get("baseline_end") and doc.get("end_date"):
+        variance = (doc["end_date"].date() - doc["baseline_end"].date()).days
+        doc["baseline_variance_days"] = variance
+        if variance > 0:
+            doc["schedule_status"] = "Late"
+        elif variance < 0:
+            doc["schedule_status"] = "Ahead"
+        else:
+            doc["schedule_status"] = "On Baseline"
+    else:
+        doc["baseline_variance_days"] = None
+        doc["schedule_status"] = "No Baseline"
     doc["id"] = str(doc["_id"])
     doc.pop("_id", None)
     return Project(**doc)
@@ -112,4 +124,46 @@ async def delete_project(project_id: str) -> None:
         raise HTTPException(status_code=400, detail="Invalid project id")
     await db["projects"].delete_one({"_id": oid})
     return None
+
+
+@router.post("/{project_id}/baseline/snapshot")
+async def snapshot_project_baseline(project_id: str) -> dict:
+    db = get_database()
+    try:
+        oid = ObjectId(project_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid project id")
+
+    project = await db["projects"].find_one({"_id": oid})
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    now = datetime.utcnow()
+    await db["projects"].update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "baseline_start": project.get("start_date"),
+                "baseline_end": project.get("end_date"),
+                "updated_at": now,
+            }
+        },
+    )
+
+    cursor = db["tasks"].find({"project_id": project_id})
+    updated_tasks = 0
+    async for task in cursor:
+        await db["tasks"].update_one(
+            {"_id": task["_id"]},
+            {
+                "$set": {
+                    "baseline_start": task.get("start_date"),
+                    "baseline_end": task.get("end_date"),
+                    "updated_at": now,
+                }
+            },
+        )
+        updated_tasks += 1
+
+    return {"status": "ok", "updated_tasks": updated_tasks}
 

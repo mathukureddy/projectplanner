@@ -9,6 +9,8 @@ class TaskInlineCreate(BaseModel):
     description: Optional[str] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
+    baseline_start: Optional[date] = None
+    baseline_end: Optional[date] = None
     duration_days: Optional[int] = Field(default=None, ge=0)
     assigned_to: Optional[str] = None
     status: str = "Not Started"
@@ -23,6 +25,8 @@ class TaskBase(BaseModel):
     description: Optional[str] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
+    baseline_start: Optional[date] = None
+    baseline_end: Optional[date] = None
     duration_days: Optional[int] = Field(default=None, ge=0)
     assigned_to: Optional[str] = None
     status: str = "Not Started"
@@ -40,6 +44,8 @@ class TaskUpdate(BaseModel):
     description: Optional[str] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
+    baseline_start: Optional[date] = None
+    baseline_end: Optional[date] = None
     duration_days: Optional[int] = Field(default=None, ge=0)
     assigned_to: Optional[str] = None
     status: Optional[str] = None
@@ -52,6 +58,17 @@ class Task(TaskBase):
     id: str
     created_at: datetime
     updated_at: datetime
+    hierarchy_level: Optional[int] = None
+    child_count: Optional[int] = None
+    rollup_percent_complete: Optional[int] = None
+    rollup_status: Optional[str] = None
+    earliest_start_day: Optional[int] = None
+    earliest_finish_day: Optional[int] = None
+    latest_start_day: Optional[int] = None
+    latest_finish_day: Optional[int] = None
+    slack_days: Optional[int] = None
+    is_critical: Optional[bool] = None
+    baseline_variance_days: Optional[int] = None
 
 
 class ProjectBase(BaseModel):
@@ -86,4 +103,6 @@ class Project(ProjectBase):
     id: str
     created_at: datetime
     updated_at: datetime
+    baseline_variance_days: Optional[int] = None
+    schedule_status: Optional[str] = None
 
