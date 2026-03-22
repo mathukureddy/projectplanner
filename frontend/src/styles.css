@@ -8,31 +8,85 @@ body {
 .app-shell {
   min-height: 100vh;
   display: flex;
+  flex-direction: row;
+}
+
+.side-nav {
+  width: 250px;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 1rem 0.9rem;
+  border-right: 1px solid #1e293b;
+  display: flex;
   flex-direction: column;
 }
 
-.app-header {
-  background: linear-gradient(135deg, #0d6efd, #6610f2);
-  color: white;
-  padding: 0.75rem 1.5rem;
+.side-nav h1 {
+  margin: 0 0 1rem 0;
+  font-size: 1.05rem;
+}
+
+.side-nav nav {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 0.35rem;
 }
 
-.app-header h1 {
-  margin: 0;
-  font-size: 1.2rem;
-}
-
-.app-header nav a {
-  color: white;
+.side-nav nav a {
+  color: #cbd5e1;
   text-decoration: none;
-  margin-left: 1rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+}
+
+.side-nav nav a:hover {
+  background: #1e293b;
+}
+
+.side-nav nav a.active {
+  background: #2563eb;
+  color: #fff;
+}
+
+.side-submenu {
+  margin-left: 0.75rem;
+  border-left: 1px solid #334155;
+  padding-left: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.side-submenu a {
+  font-size: 0.92rem;
 }
 
 .app-main {
+  flex: 1;
   padding: 1.5rem;
+}
+
+.muted {
+  color: #64748b;
+}
+
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: #f5f7fb;
+}
+
+.login-card {
+  width: min(420px, 92vw);
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.08);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
 }
 
 .inline-form {
@@ -103,6 +157,10 @@ button:disabled {
 .data-table td {
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid #e5e7eb;
+}
+
+.data-table th {
+  text-align: left;
 }
 
 .data-table tbody tr:hover {

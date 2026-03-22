@@ -1,12 +1,32 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import {
   fetchProject,
   fetchTasks,
   createTask,
   updateTask,
   deleteTask,
-  snapshotProjectBaseline
+  snapshotProjectBaseline,
+  updateProject,
+  fetchComments,
+  createComment,
+  deleteComment,
+  fetchAttachments,
+  uploadTaskAttachment,
+  deleteAttachment,
+  attachmentDownloadUrl,
+  fetchAlerts,
+  markAlertRead,
+  scanOverdueAlerts,
+  fetchProjectAutomations,
+  updateProjectAutomations,
+  runProjectAutomations,
+  fetchProjectFormulas,
+  updateProjectFormulas,
+  evaluateProjectFormulas,
+  fetchProjectGovernance,
+  updateProjectGovernance,
+  fetchCellHistory
 } from "../api.js";
 
 export default function ProjectDetailPage() {
@@ -17,6 +37,7 @@ export default function ProjectDetailPage() {
   const [taskStatus, setTaskStatus] = useState("Not Started");
   const [taskStartDate, setTaskStartDate] = useState("");
   const [taskEndDate, setTaskEndDate] = useState("");
+  const [taskParentId, setTaskParentId] = useState("");
   const [viewMode, setViewMode] = useState("grid");
 
   const [selectedTaskKey, setSelectedTaskKey] = useState(null);
@@ -29,17 +50,164 @@ export default function ProjectDetailPage() {
   const [snapshottingBaseline, setSnapshottingBaseline] = useState(false);
   const [deletingTaskKey, setDeletingTaskKey] = useState(null);
 
+  const [alerts, setAlerts] = useState([]);
+  const [scanningAlerts, setScanningAlerts] = useState(false);
+  const [shareEmail, setShareEmail] = useState("");
+  const [shareRole, setShareRole] = useState("viewer");
+
+  const [commentAuthor, setCommentAuthor] = useState(() =>
+    typeof localStorage !== "undefined" ? localStorage.getItem("pp_comment_author") || "" : ""
+  );
+  const [commentBody, setCommentBody] = useState("");
+  const [taskComments, setTaskComments] = useState([]);
+  const [taskAttachments, setTaskAttachments] = useState([]);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const [sharingOpen, setSharingOpen] = useState(false);
+  const [automationsOpen, setAutomationsOpen] = useState(false);
+  const [projectAutomations, setProjectAutomations] = useState([]);
+  const [savingAutomations, setSavingAutomations] = useState(false);
+  const [runningAutomations, setRunningAutomations] = useState(false);
+  const [dataFeaturesOpen, setDataFeaturesOpen] = useState(false);
+  const [formulas, setFormulas] = useState([]);
+  const [newFormulaName, setNewFormulaName] = useState("");
+  const [newFormulaTarget, setNewFormulaTarget] = useState("percent_complete");
+  const [newFormulaExpr, setNewFormulaExpr] = useState("");
+  const [governance, setGovernance] = useState({ locked_fields: [], restrict_locked_to_admin: true });
+  const [lockedFieldsText, setLockedFieldsText] = useState("");
+  const [cellHistory, setCellHistory] = useState([]);
+  const [savingDataFeatures, setSavingDataFeatures] = useState(false);
+  const [runningFormulaEval, setRunningFormulaEval] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(true);
+  const [detailError, setDetailError] = useState("");
+
+  function formatLoadError(err) {
+    const d = err?.response?.data?.detail;
+    if (Array.isArray(d)) {
+      return d.map((x) => x.msg || JSON.stringify(x)).join("; ");
+    }
+    if (typeof d === "string") return d;
+    if (d && typeof d === "object") return JSON.stringify(d);
+    if (err?.code === "ECONNABORTED") return "Request timed out — is the backend running and MongoDB up?";
+    if (err?.message === "Network Error") return "Cannot reach API — check the backend is running and VITE_API_BASE.";
+    return err?.message || "Failed to load project";
+  }
+
   useEffect(() => {
+    let cancelled = false;
     async function load() {
-      const [p, t] = await Promise.all([
-        fetchProject(projectId),
-        fetchTasks(projectId)
-      ]);
-      setProject(p);
-      setTasks(t);
+      if (!projectId) {
+        setDetailLoading(false);
+        setDetailError("Missing project id in URL.");
+        setProject(null);
+        setTasks([]);
+        return;
+      }
+      setDetailLoading(true);
+      setDetailError("");
+      try {
+        const p = await fetchProject(projectId);
+        if (cancelled) return;
+        setProject(p);
+        try {
+          const t = await fetchTasks(projectId);
+          if (!cancelled) setTasks(t);
+        } catch (te) {
+          if (!cancelled) {
+            setTasks([]);
+            setDetailError(
+              `Project loaded, but tasks failed: ${formatLoadError(te)}`
+            );
+          }
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setProject(null);
+          setTasks([]);
+          setDetailError(formatLoadError(e));
+        }
+      } finally {
+        if (!cancelled) setDetailLoading(false);
+      }
     }
     load();
+    return () => {
+      cancelled = true;
+    };
   }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    (async () => {
+      try {
+        const [f, g] = await Promise.all([
+          fetchProjectFormulas(projectId),
+          fetchProjectGovernance(projectId),
+        ]);
+        setFormulas(Array.isArray(f) ? f : []);
+        const gov = g || { locked_fields: [], restrict_locked_to_admin: true };
+        setGovernance(gov);
+        setLockedFieldsText((gov.locked_fields || []).join(", "));
+      } catch {
+        setFormulas([]);
+      }
+    })();
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    (async () => {
+      try {
+        setCellHistory(await fetchCellHistory(projectId, selectedTaskKey || "", "", 50));
+      } catch {
+        setCellHistory([]);
+      }
+    })();
+  }, [projectId, selectedTaskKey, tasks]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    (async () => {
+      try {
+        setAlerts(await fetchAlerts(projectId));
+      } catch {
+        setAlerts([]);
+      }
+    })();
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    (async () => {
+      try {
+        const autos = await fetchProjectAutomations(projectId);
+        setProjectAutomations(Array.isArray(autos) ? autos : []);
+      } catch {
+        setProjectAutomations([]);
+      }
+    })();
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!selectedTaskKey || !projectId) {
+      setTaskComments([]);
+      setTaskAttachments([]);
+      return;
+    }
+    (async () => {
+      try {
+        const [c, a] = await Promise.all([
+          fetchComments(projectId, selectedTaskKey),
+          fetchAttachments(projectId, selectedTaskKey)
+        ]);
+        setTaskComments(c);
+        setTaskAttachments(a);
+      } catch {
+        setTaskComments([]);
+        setTaskAttachments([]);
+      }
+    })();
+  }, [selectedTaskKey, projectId]);
 
   async function reloadTasks() {
     const t = await fetchTasks(projectId);
@@ -52,14 +220,15 @@ export default function ProjectDetailPage() {
   );
 
   useEffect(() => {
-    if (!selectedTask) return;
-    setEditStatus(selectedTask.status || "Not Started");
-    setEditStartDate(selectedTask.start_date || "");
-    setEditEndDate(selectedTask.end_date || "");
-    setEditPredecessors(selectedTask.predecessors || []);
-    setEditPercentComplete(selectedTask.percent_complete ?? 0);
-    setEditParentTaskId(selectedTask.parent_task_id || "");
-  }, [selectedTaskKey]);
+    const t = tasks.find((x) => (x.id || x._id) === selectedTaskKey);
+    if (!t) return;
+    setEditStatus(t.status || "Not Started");
+    setEditStartDate(t.start_date || "");
+    setEditEndDate(t.end_date || "");
+    setEditPredecessors(t.predecessors || []);
+    setEditPercentComplete(t.percent_complete ?? 0);
+    setEditParentTaskId(t.parent_task_id ? String(t.parent_task_id) : "");
+  }, [selectedTaskKey, tasks]);
 
   function handleEditStatusChange(nextStatus) {
     setEditStatus(nextStatus);
@@ -77,12 +246,13 @@ export default function ProjectDetailPage() {
       start_date: taskStartDate || null,
       end_date: taskEndDate || null,
       predecessors: [],
-      parent_task_id: null
+      parent_task_id: taskParentId || null
     });
     setTaskName("");
     setTaskStatus("Not Started");
     setTaskStartDate("");
     setTaskEndDate("");
+    setTaskParentId("");
     await reloadTasks();
   }
 
@@ -132,18 +302,231 @@ export default function ProjectDetailPage() {
     }
   }
 
-  if (!project) return <p>Loading...</p>;
+  if (detailLoading) {
+    return (
+      <div>
+        <p>Loading project…</p>
+        <p style={{ fontSize: "0.9rem", color: "#666" }}>
+          If this never finishes, confirm MongoDB is running and the backend uses the same{" "}
+          <code>MONGODB_DB</code> as when the project was created.
+        </p>
+      </div>
+    );
+  }
+
+  if (detailError && !project) {
+    return (
+      <div>
+        <p style={{ color: "#b02a37" }}>{detailError}</p>
+        <p style={{ fontSize: "0.9rem", color: "#444" }}>
+          Common causes: backend or MongoDB stopped after restart; or <code>MONGODB_DB</code> /{" "}
+          <code>MONGODB_URI</code> differs from before (data lives in the database name you used).
+        </p>
+        <p>
+          <Link to="/">← Back to projects</Link>
+        </p>
+      </div>
+    );
+  }
+
+  if (!project) {
+    return (
+      <div>
+        <p>Project not found.</p>
+        <p>
+          <Link to="/">← Back to projects</Link>
+        </p>
+      </div>
+    );
+  }
 
   async function handleSnapshotBaseline() {
     setSnapshottingBaseline(true);
     try {
-      await snapshotProjectBaseline(projectId);
-      const [p, t] = await Promise.all([fetchProject(projectId), fetchTasks(projectId)]);
-      setProject(p);
-      setTasks(t);
+      const data = await snapshotProjectBaseline(projectId);
+      if (data?.project) {
+        setProject(data.project);
+      } else {
+        setProject(await fetchProject(projectId));
+      }
+      setTasks(await fetchTasks(projectId));
+    } catch (e) {
+      const d = e?.response?.data?.detail;
+      const msg = Array.isArray(d)
+        ? d.map((x) => x.msg || JSON.stringify(x)).join("; ")
+        : d || e.message;
+      console.error(e);
+      window.alert(String(msg || "Baseline snapshot failed"));
     } finally {
       setSnapshottingBaseline(false);
     }
+  }
+
+  async function reloadAlerts() {
+    try {
+      setAlerts(await fetchAlerts(projectId));
+    } catch {
+      setAlerts([]);
+    }
+  }
+
+  function setAutomationEnabled(automationType, enabled) {
+    setProjectAutomations((prev) => {
+      if (!prev || prev.length === 0) {
+        prev = [
+          { type: "notify_on_completion", enabled: true },
+          { type: "overdue_alert", enabled: true },
+        ];
+      }
+      return prev.map((r) =>
+        r.type === automationType ? { ...r, enabled: !!enabled } : r
+      );
+    });
+  }
+
+  async function handleSaveAutomations() {
+    setSavingAutomations(true);
+    try {
+      const payload = {
+        automations: projectAutomations.map((r) => ({
+          type: r.type,
+          enabled: !!r.enabled,
+        })),
+      };
+      const next = await updateProjectAutomations(projectId, payload);
+      setProjectAutomations(next);
+    } catch (e) {
+      const d = e?.response?.data?.detail;
+      window.alert(String(d || e.message || "Failed to save automation rules"));
+    } finally {
+      setSavingAutomations(false);
+    }
+  }
+
+  async function handleRunAutomationsNow() {
+    setRunningAutomations(true);
+    try {
+      const res = await runProjectAutomations(projectId);
+      await reloadAlerts();
+      window.alert(
+        `Automations run: overdue=${res?.overdue_alerts_created ?? 0}, completion=${res?.completion_alerts_created ?? 0}`
+      );
+    } catch (e) {
+      const d = e?.response?.data?.detail;
+      window.alert(String(d || e.message || "Failed to run automations"));
+    } finally {
+      setRunningAutomations(false);
+    }
+  }
+
+  async function handleSaveDataFeatures() {
+    setSavingDataFeatures(true);
+    try {
+      const nextGovernance = {
+        ...governance,
+        locked_fields: lockedFieldsText
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      };
+      const [savedFormulas, savedGov] = await Promise.all([
+        updateProjectFormulas(projectId, formulas),
+        updateProjectGovernance(projectId, nextGovernance),
+      ]);
+      setFormulas(Array.isArray(savedFormulas) ? savedFormulas : []);
+      setGovernance(savedGov || nextGovernance);
+      setLockedFieldsText((savedGov?.locked_fields || nextGovernance.locked_fields || []).join(", "));
+      window.alert("Data features saved");
+    } catch (e) {
+      const d = e?.response?.data?.detail;
+      window.alert(String(d || e.message || "Failed to save data features"));
+    } finally {
+      setSavingDataFeatures(false);
+    }
+  }
+
+  async function handleEvaluateFormulasNow() {
+    setRunningFormulaEval(true);
+    try {
+      const res = await evaluateProjectFormulas(projectId);
+      await reloadTasks();
+      setCellHistory(await fetchCellHistory(projectId, selectedTaskKey || "", "", 50));
+      window.alert(`Formulas evaluated: ${res?.applied ?? 0} cell updates`);
+    } catch (e) {
+      const d = e?.response?.data?.detail;
+      window.alert(String(d || e.message || "Formula evaluation failed"));
+    } finally {
+      setRunningFormulaEval(false);
+    }
+  }
+
+  async function handleScanOverdue() {
+    setScanningAlerts(true);
+    try {
+      await scanOverdueAlerts(projectId);
+      await reloadAlerts();
+    } finally {
+      setScanningAlerts(false);
+    }
+  }
+
+  async function handleMarkAlertRead(alertId) {
+    await markAlertRead(projectId, alertId, true);
+    await reloadAlerts();
+  }
+
+  async function handleAddShare(e) {
+    e.preventDefault();
+    if (!shareEmail.trim()) return;
+    const next = [...(project.shares || []), { email: shareEmail.trim(), role: shareRole }];
+    const p = await updateProject(projectId, { shares: next });
+    setProject(p);
+    setShareEmail("");
+    setShareRole("viewer");
+  }
+
+  async function handleRemoveShare(email) {
+    const next = (project.shares || []).filter((s) => s.email !== email);
+    const p = await updateProject(projectId, { shares: next });
+    setProject(p);
+  }
+
+  async function handleAddComment(e) {
+    e.preventDefault();
+    if (!selectedTaskKey || !commentAuthor.trim() || !commentBody.trim()) return;
+    localStorage.setItem("pp_comment_author", commentAuthor.trim());
+    await createComment(projectId, {
+      task_id: selectedTaskKey,
+      author: commentAuthor.trim(),
+      body: commentBody.trim()
+    });
+    setCommentBody("");
+    setTaskComments(await fetchComments(projectId, selectedTaskKey));
+  }
+
+  async function handleDeleteComment(commentId) {
+    if (!window.confirm("Delete this comment?")) return;
+    await deleteComment(projectId, commentId);
+    setTaskComments(await fetchComments(projectId, selectedTaskKey));
+  }
+
+  async function handleAttachmentSelected(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !selectedTaskKey) return;
+    setUploadingAttachment(true);
+    try {
+      await uploadTaskAttachment(projectId, selectedTaskKey, file, commentAuthor.trim());
+      setTaskAttachments(await fetchAttachments(projectId, selectedTaskKey));
+    } finally {
+      setUploadingAttachment(false);
+    }
+  }
+
+  async function handleDeleteAttachment(attId) {
+    if (!window.confirm("Delete this attachment?")) return;
+    await deleteAttachment(projectId, attId);
+    setTaskAttachments(await fetchAttachments(projectId, selectedTaskKey));
   }
 
   const tasksById = Object.fromEntries(tasks.map((t) => [t.id || t._id, t]));
@@ -222,8 +605,46 @@ export default function ProjectDetailPage() {
     return new Date(a).getTime() - new Date(b).getTime();
   });
 
+  const collapseHeaderStyle = {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.5rem",
+    width: "100%",
+    textAlign: "left",
+    background: "#f1f5f9",
+    color: "#0f172a",
+    border: "1px solid #e2e8f0",
+    padding: "0.5rem 0.75rem",
+    cursor: "pointer",
+    borderRadius: "6px",
+    fontSize: "1.1rem",
+    fontWeight: 600,
+    marginBottom: "0.5rem"
+  };
+
+  const unreadAlertCount = alerts.filter((x) => !x.read).length;
+  const shareCount = (project.shares || []).length;
+  const notifyOnCompletionEnabled =
+    projectAutomations.find((x) => x.type === "notify_on_completion")?.enabled ?? true;
+  const overdueAlertEnabled =
+    projectAutomations.find((x) => x.type === "overdue_alert")?.enabled ?? true;
+
   return (
     <div>
+      {detailError ? (
+        <p
+          role="alert"
+          style={{
+            background: "#fff3cd",
+            border: "1px solid #ffc107",
+            padding: "0.5rem 0.75rem",
+            borderRadius: "6px",
+            marginBottom: "0.75rem"
+          }}
+        >
+          {detailError}
+        </p>
+      ) : null}
       <h2>{project.name}</h2>
       <p>Status: {project.status}</p>
       <p>
@@ -278,6 +699,19 @@ export default function ProjectDetailPage() {
             onChange={(e) => setTaskEndDate(e.target.value)}
             title="End date"
           />
+          <select
+            value={taskParentId}
+            onChange={(e) => setTaskParentId(e.target.value)}
+            title="Parent task (optional)"
+            aria-label="Parent task"
+          >
+            <option value="">No parent (top-level)</option>
+            {tasks.map((t) => (
+              <option key={t.id || t._id} value={t.id || t._id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
           <button type="submit">Add</button>
         </form>
 
@@ -468,9 +902,39 @@ export default function ProjectDetailPage() {
       </section>
 
       {selectedTask ? (
-        <section style={{ marginTop: "1.5rem" }}>
-          <h3>Edit Task</h3>
-          <form onSubmit={handleSaveEdit} className="inline-form">
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(15, 23, 42, 0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "1rem",
+            zIndex: 1000,
+          }}
+          onClick={() => setSelectedTaskKey(null)}
+        >
+          <section
+            style={{
+              width: "min(980px, 95vw)",
+              maxHeight: "90vh",
+              overflowY: "auto",
+              background: "#fff",
+              borderRadius: "10px",
+              padding: "1rem",
+              boxShadow: "0 10px 30px rgba(15, 23, 42, 0.25)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ margin: 0 }}>Edit Task</h3>
+            <div className="inline-form" style={{ marginBottom: 0 }}>
+              <button type="button" onClick={() => setSelectedTaskKey(null)}>Cancel</button>
+              <button type="button" onClick={() => setSelectedTaskKey(null)}>Close</button>
+            </div>
+          </div>
+          <form onSubmit={handleSaveEdit} className="inline-form" style={{ marginTop: "0.8rem" }}>
             <input value={selectedTask.name} disabled />
             <select
               value={editStatus}
@@ -527,7 +991,80 @@ export default function ProjectDetailPage() {
             </select>
             <button type="submit">Save</button>
           </form>
-        </section>
+
+          <h4 style={{ marginTop: "1.25rem" }}>Comments</h4>
+          <form onSubmit={handleAddComment} className="inline-form" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+            <input
+              placeholder="Your name"
+              value={commentAuthor}
+              onChange={(e) => setCommentAuthor(e.target.value)}
+              onBlur={() => localStorage.setItem("pp_comment_author", commentAuthor)}
+              style={{ minWidth: "8rem" }}
+            />
+            <input
+              placeholder="Comment"
+              value={commentBody}
+              onChange={(e) => setCommentBody(e.target.value)}
+              style={{ minWidth: "14rem", flex: 1 }}
+            />
+            <button type="submit">Post comment</button>
+          </form>
+          <div className="data-table" style={{ padding: "0.6rem", marginTop: "0.5rem" }}>
+            {taskComments.length === 0 ? (
+              <p style={{ margin: 0 }}>No comments yet.</p>
+            ) : (
+              taskComments.map((c) => (
+                <div key={c.id} style={{ marginBottom: "0.5rem" }}>
+                  <strong>{c.author}</strong>{" "}
+                  <span style={{ fontSize: "0.8rem", color: "#666" }}>{c.created_at}</span>
+                  <div>{c.body}</div>
+                  <button type="button" onClick={() => handleDeleteComment(c.id)}>
+                    Delete
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+
+          <h4 style={{ marginTop: "1.25rem" }}>Attachments</h4>
+          <div className="inline-form">
+            <label>
+              <span style={{ marginRight: "0.5rem" }}>Upload file</span>
+              <input
+                type="file"
+                disabled={uploadingAttachment}
+                onChange={handleAttachmentSelected}
+              />
+            </label>
+            {uploadingAttachment ? <span>Uploading...</span> : null}
+          </div>
+          <ul style={{ marginTop: "0.5rem" }}>
+            {taskAttachments.length === 0 ? (
+              <li>No attachments.</li>
+            ) : (
+              taskAttachments.map((att) => (
+                <li key={att.id}>
+                  <a
+                    href={attachmentDownloadUrl(att.id, projectId)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {att.filename}
+                  </a>{" "}
+                  ({Math.round((att.size || 0) / 1024)} KB)
+                  <button
+                    type="button"
+                    style={{ marginLeft: "0.5rem" }}
+                    onClick={() => handleDeleteAttachment(att.id)}
+                  >
+                    Delete
+                  </button>
+                </li>
+              ))
+            )}
+          </ul>
+          </section>
+        </div>
       ) : null}
     </div>
   );

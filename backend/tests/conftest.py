@@ -29,14 +29,32 @@ def _mongo_cleanup():
     db = client[db_name]
     projects = db["projects"]
     tasks = db["tasks"]
+    comments = db["comments"]
+    attachments = db["attachments"]
+    alerts = db["alerts"]
+    cell_history = db["cell_history"]
+    integration_events = db["integration_events"]
+    users = db["users"]
 
     projects.delete_many({})
     tasks.delete_many({})
+    comments.delete_many({})
+    attachments.delete_many({})
+    alerts.delete_many({})
+    cell_history.delete_many({})
+    integration_events.delete_many({})
+    users.delete_many({})
 
     yield
 
     projects.delete_many({})
     tasks.delete_many({})
+    comments.delete_many({})
+    attachments.delete_many({})
+    alerts.delete_many({})
+    cell_history.delete_many({})
+    integration_events.delete_many({})
+    users.delete_many({})
     client.close()
 
 

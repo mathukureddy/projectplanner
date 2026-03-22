@@ -176,8 +176,10 @@ async def test_snapshot_project_baseline_endpoint():
 
         snap = await ac.post(f"/projects/{project_id}/baseline/snapshot")
         assert snap.status_code == 200
-        assert snap.json()["status"] == "ok"
-        assert snap.json()["updated_tasks"] == 1
+        body = snap.json()
+        assert body["status"] == "ok"
+        assert body["updated_tasks"] == 1
+        assert body["project"]["id"] == project_id
 
         project_after = await ac.get(f"/projects/{project_id}")
         assert project_after.status_code == 200
@@ -188,4 +190,433 @@ async def test_snapshot_project_baseline_endpoint():
         assert tasks_after.status_code == 200
         assert tasks_after.json()[0]["baseline_start"] is not None
         assert tasks_after.json()[0]["baseline_end"] is not None
+
+
+@pytest.mark.asyncio
+async def test_baseline_snapshot_rolls_up_task_dates_when_project_dates_empty():
+    """Project plan dates often live only on tasks; snapshot should still set project baseline."""
+    app = create_app()
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        project_resp = await ac.post(
+            "/projects/",
+            json={
+                "name": "UT_BaselineRollup_" + __import__("uuid").uuid4().hex[:8],
+                "status": "On Track",
+                "tasks": [
+                    {
+                        "name": "A",
+                        "start_date": "2026-04-01",
+                        "end_date": "2026-04-05",
+                    },
+                    {
+                        "name": "B",
+                        "start_date": "2026-04-10",
+                        "end_date": "2026-04-20",
+                    },
+                ],
+            },
+        )
+        assert project_resp.status_code == 201
+        project_id = project_resp.json()["id"]
+        assert project_resp.json().get("start_date") in (None, "")
+
+        snap = await ac.post(f"/projects/{project_id}/baseline/snapshot")
+        assert snap.status_code == 200
+        proj = snap.json()["project"]
+        assert proj["baseline_start"] is not None
+        assert proj["baseline_end"] is not None
+
+
+@pytest.mark.asyncio
+async def test_collaboration_comments_shares_and_alerts():
+    app = create_app()
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        project_resp = await ac.post(
+            "/projects/",
+            json={
+                "name": "UT_Collab_" + __import__("uuid").uuid4().hex[:8],
+                "status": "On Track",
+                "tasks": [{"name": "Only Task"}],
+            },
+        )
+        assert project_resp.status_code == 201
+        project_id = project_resp.json()["id"]
+        task_id = (await ac.get("/tasks/", params={"project_id": project_id})).json()[0]["id"]
+
+        share = await ac.patch(
+            f"/projects/{project_id}",
+            json={"shares": [{"email": "a@example.com", "role": "editor"}]},
+        )
+        assert share.status_code == 200
+        assert share.json()["shares"][0]["email"] == "a@example.com"
+
+        c = await ac.post(
+            "/comments/?project_id=" + project_id,
+            json={"task_id": task_id, "author": "Alice", "body": "Hello"},
+        )
+        assert c.status_code == 201
+        lst = await ac.get("/comments/", params={"task_id": task_id, "project_id": project_id})
+        assert lst.status_code == 200
+        assert len(lst.json()) == 1
+
+        alert = await ac.post(
+            "/alerts/",
+            json={
+                "project_id": project_id,
+                "title": "Note",
+                "message": "Something happened",
+                "task_id": task_id,
+            },
+        )
+        assert alert.status_code == 201
+        alerts = await ac.get("/alerts/", params={"project_id": project_id})
+        assert alerts.status_code == 200
+        assert len(alerts.json()) >= 1
+
+
+@pytest.mark.asyncio
+async def test_automation_notify_on_completion_creates_alert_on_status_change():
+    app = create_app()
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        project_resp = await ac.post(
+            "/projects/",
+            json={
+                "name": "UT_AutoComplete_" + __import__("uuid").uuid4().hex[:8],
+                "status": "On Track",
+                "tasks": [{"name": "Task Auto"}],
+            },
+        )
+        assert project_resp.status_code == 201
+        project_id = project_resp.json()["id"]
+
+        task_id = (await ac.get("/tasks/", params={"project_id": project_id})).json()[0]["id"]
+
+        # Mark task as Complete; backend should create `task_completed` alert.
+        upd = await ac.patch(
+            f"/tasks/{task_id}",
+            json={"status": "Complete"},
+        )
+        assert upd.status_code == 200
+
+        alerts = await ac.get("/alerts/", params={"project_id": project_id})
+        assert alerts.status_code == 200
+        assert any(a.get("kind") == "task_completed" for a in alerts.json())
+
+
+@pytest.mark.asyncio
+async def test_automation_time_trigger_overdue_alerts_on_run():
+    app = create_app()
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        project_resp = await ac.post(
+            "/projects/",
+            json={
+                "name": "UT_AutoOverdue_" + __import__("uuid").uuid4().hex[:8],
+                "status": "On Track",
+                "tasks": [
+                    {
+                        "name": "Old Task",
+                        "end_date": "2020-01-01",
+                        "start_date": "2020-01-01",
+                        "status": "In Progress",
+                        "percent_complete": 10,
+                    }
+                ],
+            },
+        )
+        assert project_resp.status_code == 201
+        project_id = project_resp.json()["id"]
+
+        run = await ac.post(f"/projects/{project_id}/automations/run")
+        assert run.status_code == 200
+
+        alerts = await ac.get("/alerts/", params={"project_id": project_id})
+        assert alerts.status_code == 200
+        assert any(a.get("kind") == "task_overdue" for a in alerts.json())
+
+
+@pytest.mark.asyncio
+async def test_reporting_portfolio_and_project_rollups():
+    app = create_app()
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        project_resp = await ac.post(
+            "/projects/",
+            json={
+                "name": "UT_Report_" + __import__("uuid").uuid4().hex[:8],
+                "status": "On Track",
+                "tasks": [
+                    {"name": "Done", "status": "Complete", "percent_complete": 100},
+                    {"name": "Late", "status": "In Progress", "end_date": "2020-01-01", "percent_complete": 50},
+                ],
+            },
+        )
+        assert project_resp.status_code == 201
+        project_id = project_resp.json()["id"]
+
+        portfolio = await ac.get("/reports/portfolio")
+        assert portfolio.status_code == 200
+        body = portfolio.json()
+        assert body["totals"]["project_count"] >= 1
+        assert body["totals"]["task_count"] >= 2
+        assert "projects" in body
+
+        project_report = await ac.get(f"/reports/projects/{project_id}")
+        assert project_report.status_code == 200
+        pbody = project_report.json()
+        assert pbody["project"]["id"] == project_id
+        assert pbody["totals"]["task_count"] == 2
+        assert pbody["totals"]["completed_task_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_data_features_formulas_governance_and_cell_history():
+    app = create_app()
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        p = await ac.post(
+            "/projects/",
+            json={
+                "name": "UT_DataFeat_" + __import__("uuid").uuid4().hex[:8],
+                "status": "On Track",
+                "tasks": [{"name": "T1", "percent_complete": 40}],
+            },
+        )
+        assert p.status_code == 201
+        project_id = p.json()["id"]
+        task_id = (await ac.get("/tasks/", params={"project_id": project_id})).json()[0]["id"]
+
+        # Governance: lock status field.
+        gov = await ac.patch(
+            f"/projects/{project_id}/governance",
+            json={"locked_fields": ["status"], "restrict_locked_to_admin": True},
+        )
+        assert gov.status_code == 200
+
+        blocked = await ac.patch(
+            f"/tasks/{task_id}",
+            json={"status": "Complete"},
+            headers={"x-user-role": "editor", "x-user-name": "alice"},
+        )
+        assert blocked.status_code == 403
+
+        allowed = await ac.patch(
+            f"/tasks/{task_id}",
+            json={"status": "Complete"},
+            headers={"x-user-role": "admin", "x-user-name": "admin"},
+        )
+        assert allowed.status_code == 200
+
+        # Formula writes into a target field and creates cell history.
+        formulas = await ac.patch(
+            f"/projects/{project_id}/formulas",
+            json=[
+                {
+                    "name": "Half progress",
+                    "target_field": "duration_days",
+                    "expression": "percent_complete/2",
+                    "enabled": True,
+                }
+            ],
+        )
+        assert formulas.status_code == 200
+
+        eval_res = await ac.post(f"/projects/{project_id}/formulas/evaluate")
+        assert eval_res.status_code == 200
+        assert eval_res.json()["applied"] >= 1
+
+        history = await ac.get(f"/projects/{project_id}/cell-history", params={"task_id": task_id})
+        assert history.status_code == 200
+        assert len(history.json()) >= 1
+
+
+@pytest.mark.asyncio
+async def test_integrations_config_test_and_events():
+    app = create_app()
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        p = await ac.post(
+            "/projects/",
+            json={"name": "UT_Integrations_" + __import__("uuid").uuid4().hex[:8], "tasks": [{"name": "T1"}]},
+        )
+        assert p.status_code == 201
+        project_id = p.json()["id"]
+
+        patch = await ac.patch(
+            f"/projects/{project_id}/integrations",
+            json={
+                "integrations": [
+                    {"type": "webhook", "enabled": True, "endpoint": "https://example.com/hook"},
+                    {"type": "email", "enabled": False},
+                ]
+            },
+        )
+        assert patch.status_code == 200
+        assert len(patch.json()) == 2
+
+        send = await ac.post(
+            f"/projects/{project_id}/integrations/test",
+            json={"integration_type": "webhook", "event_type": "task_completed", "payload": {"task_id": "abc"}},
+        )
+        assert send.status_code == 200
+
+        inbound = await ac.post(
+            f"/projects/{project_id}/integrations/webhook/webhook",
+            json={"source": "external-system", "status": "ok"},
+        )
+        assert inbound.status_code == 200
+
+        events = await ac.get(f"/projects/{project_id}/integrations/events")
+        assert events.status_code == 200
+        assert len(events.json()) >= 2
+
+
+@pytest.mark.asyncio
+async def test_integrations_auto_events_for_task_completion_and_overdue():
+    app = create_app()
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        p = await ac.post(
+            "/projects/",
+            json={
+                "name": "UT_IntAuto_" + __import__("uuid").uuid4().hex[:8],
+                "tasks": [
+                    {"name": "Old Task", "status": "In Progress", "start_date": "2020-01-01", "end_date": "2020-01-01"},
+                    {"name": "Soon Done", "status": "Not Started"},
+                ],
+            },
+        )
+        assert p.status_code == 201
+        project_id = p.json()["id"]
+
+        cfg = await ac.patch(
+            f"/projects/{project_id}/integrations",
+            json={"integrations": [{"type": "webhook", "enabled": True, "endpoint": "https://example.com/hook"}]},
+        )
+        assert cfg.status_code == 200
+
+        tasks = await ac.get("/tasks/", params={"project_id": project_id})
+        assert tasks.status_code == 200
+        by_name = {t["name"]: t for t in tasks.json()}
+        done_task_id = by_name["Soon Done"]["id"]
+
+        complete = await ac.patch(f"/tasks/{done_task_id}", json={"status": "Complete"})
+        assert complete.status_code == 200
+
+        overdue = await ac.post(f"/projects/{project_id}/automations/run")
+        assert overdue.status_code == 200
+
+        events = await ac.get(f"/projects/{project_id}/integrations/events")
+        assert events.status_code == 200
+        event_types = [e["event_type"] for e in events.json()]
+        assert "task_completed" in event_types
+        assert "overdue_alert_created" in event_types
+
+
+@pytest.mark.asyncio
+async def test_auth_register_login_and_me():
+    app = create_app()
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        reg = await ac.post(
+            "/auth/register",
+            json={
+                "username": "user_a",
+                "email": "user_a@example.com",
+                "password": "secret123",
+                "role": "editor",
+            },
+        )
+        assert reg.status_code == 201
+
+        login = await ac.post("/auth/login", json={"username": "user_a", "password": "secret123"})
+        assert login.status_code == 200
+        token = login.json()["access_token"]
+        assert token
+
+        me = await ac.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert me.status_code == 200
+        assert me.json()["username"] == "user_a"
+
+
+@pytest.mark.asyncio
+async def test_auth_bootstrap_admin_case_insensitive():
+    app = create_app()
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        login = await ac.post("/auth/login", json={"username": "Admin", "password": "admin123"})
+        assert login.status_code == 200
+        token = login.json()["access_token"]
+        me = await ac.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert me.status_code == 200
+        assert me.json()["role"] == "admin"
+
+
+@pytest.mark.asyncio
+async def test_admin_user_management_requires_admin():
+    app = create_app()
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        reg = await ac.post(
+            "/auth/register",
+            json={
+                "username": "editor_only",
+                "email": "ed@example.com",
+                "password": "secret123",
+                "role": "editor",
+            },
+        )
+        assert reg.status_code == 201
+        tok = (await ac.post("/auth/login", json={"username": "editor_only", "password": "secret123"})).json()[
+            "access_token"
+        ]
+        blocked = await ac.get("/auth/admin/users", headers={"Authorization": f"Bearer {tok}"})
+        assert blocked.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_user_management_crud():
+    app = create_app()
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        admin_tok = (await ac.post("/auth/login", json={"username": "admin", "password": "admin123"})).json()[
+            "access_token"
+        ]
+        headers = {"Authorization": f"Bearer {admin_tok}"}
+
+        empty = await ac.get("/auth/admin/users", headers=headers)
+        assert empty.status_code == 200
+        assert empty.json() == []
+
+        created = await ac.post(
+            "/auth/admin/users",
+            headers=headers,
+            json={
+                "username": "managed",
+                "email": "managed@example.com",
+                "password": "pw123456",
+                "role": "viewer",
+            },
+        )
+        assert created.status_code == 201
+        uid = created.json()["id"]
+
+        listed = await ac.get("/auth/admin/users", headers=headers)
+        assert len(listed.json()) == 1
+
+        patched = await ac.patch(
+            f"/auth/admin/users/{uid}",
+            headers=headers,
+            json={"role": "editor"},
+        )
+        assert patched.status_code == 200
+        assert patched.json()["role"] == "editor"
+
+        await ac.post(
+            "/auth/admin/users",
+            headers=headers,
+            json={
+                "username": "second_admin",
+                "email": "sa@example.com",
+                "password": "pw123456",
+                "role": "admin",
+            },
+        )
+
+        del_first = await ac.delete(f"/auth/admin/users/{uid}", headers=headers)
+        assert del_first.status_code == 204
+
+        listed2 = await ac.get("/auth/admin/users", headers=headers)
+        assert len(listed2.json()) == 1
 

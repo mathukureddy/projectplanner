@@ -1,11 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routes import projects, tasks, template
+import asyncio
+
+from routes import alerts, attachments, comments, projects, tasks, template, automations, reports, data_features, integrations, auth
+from automation_scheduler import scheduler_enabled, start_overdue_scheduler
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="ProjectPlanning API")
+    app = FastAPI(title="ProjectPlanner API")
 
     app.add_middleware(
         CORSMiddleware,
@@ -21,6 +24,19 @@ def create_app() -> FastAPI:
     app.include_router(projects.router, prefix="/projects", tags=["projects"])
     app.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
     app.include_router(template.router, prefix="/template", tags=["template"])
+    app.include_router(comments.router, prefix="/comments", tags=["comments"])
+    app.include_router(attachments.router, prefix="/attachments", tags=["attachments"])
+    app.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
+    app.include_router(automations.router, prefix="/projects", tags=["automations"])
+    app.include_router(reports.router, prefix="/reports", tags=["reports"])
+    app.include_router(data_features.router, prefix="/projects", tags=["data-features"])
+    app.include_router(integrations.router, prefix="/projects", tags=["integrations"])
+    app.include_router(auth.router, prefix="/auth", tags=["auth"])
+
+    if scheduler_enabled():
+        @app.on_event("startup")
+        async def _start_overdue_scheduler() -> None:
+            start_overdue_scheduler(asyncio.get_running_loop())
 
     @app.get("/health")
     async def health() -> dict:

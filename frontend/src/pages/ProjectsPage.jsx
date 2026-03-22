@@ -15,9 +15,17 @@ export default function ProjectsPage() {
 
   async function load() {
     setLoading(true);
+    setError("");
     try {
       const data = await fetchProjects();
-      setProjects(data);
+      setProjects(Array.isArray(data) ? data : []);
+    } catch (err) {
+      const d = err?.response?.data?.detail;
+      const message = Array.isArray(d)
+        ? d.map((x) => x.msg || JSON.stringify(x)).join("; ")
+        : d || err?.message || "Unable to load projects";
+      setError(String(message));
+      setProjects([]);
     } finally {
       setLoading(false);
     }
