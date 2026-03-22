@@ -25,6 +25,7 @@ Thumbs.db
 
 # Docs/artifacts
 *.pdf
+*.rtf
 
 # Office temp files (ex: ~$something.docx)
 ~$*
