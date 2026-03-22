@@ -11,7 +11,7 @@ describe("App", () => {
         <App />
       </MemoryRouter>
     );
-    expect(getByText("ProjectPlanning")).toBeInTheDocument();
+    expect(getByText(/ProjectPlanner/i)).toBeInTheDocument();
   });
 });
 

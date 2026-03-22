@@ -259,3 +259,37 @@ export async function fetchIntegrationEvents(projectId, integrationType = "") {
   });
   return res.data;
 }
+
+export async function fetchIntakeForms(projectId) {
+  const res = await api.get(`/projects/${projectId}/intake-forms`);
+  return res.data;
+}
+
+export async function createIntakeForm(projectId, body) {
+  const res = await api.post(`/projects/${projectId}/intake-forms`, body);
+  return res.data;
+}
+
+export async function patchIntakeForm(projectId, formId, body) {
+  const res = await api.patch(`/projects/${projectId}/intake-forms/${formId}`, body);
+  return res.data;
+}
+
+export async function deleteIntakeForm(projectId, formId) {
+  await api.delete(`/projects/${projectId}/intake-forms/${formId}`);
+}
+
+export async function fetchIntakeSubmissions(projectId, formId) {
+  const res = await api.get(`/projects/${projectId}/intake-forms/${formId}/submissions`);
+  return res.data;
+}
+
+export async function fetchPublicIntakeForm(slug) {
+  const res = await api.get(`/intake/public/${slug}`);
+  return res.data;
+}
+
+export async function submitPublicIntakeForm(slug, responses) {
+  const res = await api.post(`/intake/public/${slug}/submit`, { responses });
+  return res.data;
+}

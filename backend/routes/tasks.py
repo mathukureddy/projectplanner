@@ -291,9 +291,10 @@ async def list_tasks(project_id: str = Query(..., description="Filter by project
     return [_serialize_task(doc) for doc in task_docs]
 
 
-@router.post("/", response_model=Task, status_code=201)
-async def create_task(payload: TaskCreate) -> Task:
-    db = get_database()
+async def create_task_document(db, payload: TaskCreate) -> Task:
+    """
+    Shared task creation used by the tasks API and intake forms (same validation + rollups).
+    """
     now = datetime.utcnow()
     doc = apply_status_completion_rules(normalize_document(payload.model_dump()))
     doc["project_id"] = _ref_id_to_str(doc.get("project_id")) or doc.get("project_id")
@@ -335,6 +336,12 @@ async def create_task(payload: TaskCreate) -> Task:
     project_docs = _apply_critical_path_metrics(project_docs)
     mapped = {str(t["_id"]): t for t in project_docs}
     return _serialize_task(mapped[str(created["_id"])])
+
+
+@router.post("/", response_model=Task, status_code=201)
+async def create_task(payload: TaskCreate) -> Task:
+    db = get_database()
+    return await create_task_document(db, payload)
 
 
 @router.get("/{task_id}", response_model=Task)

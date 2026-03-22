@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class TaskInlineCreate(BaseModel):
@@ -240,3 +240,121 @@ class IntegrationEvent(BaseModel):
     direction: str  # inbound | outbound
     payload: dict = Field(default_factory=dict)
     created_at: datetime
+
+
+class IntakeFormField(BaseModel):
+    """Single question on an intake form."""
+
+    key: str = Field(..., min_length=1, max_length=64)
+    label: str = Field(..., min_length=1, max_length=200)
+    type: str = "text"  # text | textarea | email | number | date
+    required: bool = False
+
+    @field_validator("key")
+    @classmethod
+    def normalize_key(cls, v: str) -> str:
+        k = (v or "").strip().lower()
+        if not k.replace("_", "").isalnum():
+            raise ValueError("key must be alphanumeric with underscores")
+        return k
+
+    @field_validator("type")
+    @classmethod
+    def type_known(cls, v: str) -> str:
+        allowed = {"text", "textarea", "email", "number", "date"}
+        if v not in allowed:
+            raise ValueError(f"type must be one of {allowed}")
+        return v
+
+
+class IntakeFormCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    enabled: bool = True
+    fields: List[IntakeFormField] = Field(min_length=1)
+    task_name_field: str
+    task_description_field: Optional[str] = None
+    task_assigned_to_field: Optional[str] = None
+    task_start_date_field: Optional[str] = None
+    task_end_date_field: Optional[str] = None
+    default_status: str = "Not Started"
+
+    @model_validator(mode="after")
+    def mapping_keys_must_exist(self) -> "IntakeFormCreate":
+        keys = {f.key for f in self.fields}
+        if len(keys) != len(self.fields):
+            raise ValueError("field keys must be unique")
+
+        def _norm(k: Optional[str]) -> Optional[str]:
+            if k is None or str(k).strip() == "":
+                return None
+            return str(k).strip().lower()
+
+        name_f = _norm(self.task_name_field)
+        if not name_f or name_f not in keys:
+            raise ValueError("task_name_field must match a field key")
+
+        for label, val in (
+            ("task_description_field", _norm(self.task_description_field)),
+            ("task_assigned_to_field", _norm(self.task_assigned_to_field)),
+            ("task_start_date_field", _norm(self.task_start_date_field)),
+            ("task_end_date_field", _norm(self.task_end_date_field)),
+        ):
+            if val is not None and val not in keys:
+                raise ValueError(f"{label} must match a field key or be omitted")
+
+        self.task_name_field = name_f
+        self.task_description_field = _norm(self.task_description_field)
+        self.task_assigned_to_field = _norm(self.task_assigned_to_field)
+        self.task_start_date_field = _norm(self.task_start_date_field)
+        self.task_end_date_field = _norm(self.task_end_date_field)
+        return self
+
+
+class IntakeFormUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    enabled: Optional[bool] = None
+    fields: Optional[List[IntakeFormField]] = None
+    task_name_field: Optional[str] = None
+    task_description_field: Optional[str] = None
+    task_assigned_to_field: Optional[str] = None
+    task_start_date_field: Optional[str] = None
+    task_end_date_field: Optional[str] = None
+    default_status: Optional[str] = None
+
+
+class IntakeFormOut(BaseModel):
+    id: str
+    project_id: str
+    slug: str
+    name: str
+    enabled: bool
+    fields: List[IntakeFormField]
+    task_name_field: str
+    task_description_field: Optional[str] = None
+    task_assigned_to_field: Optional[str] = None
+    task_start_date_field: Optional[str] = None
+    task_end_date_field: Optional[str] = None
+    default_status: str = "Not Started"
+    created_at: datetime
+    updated_at: datetime
+
+
+class IntakeFormPublicOut(BaseModel):
+    """Schema exposed to anonymous submitters (no internal ids)."""
+
+    name: str
+    fields: List[IntakeFormField]
+    project_name: str
+
+
+class IntakeSubmitPayload(BaseModel):
+    responses: dict = Field(default_factory=dict)
+
+
+class IntakeSubmissionOut(BaseModel):
+    id: str
+    form_id: str
+    project_id: str
+    task_id: str
+    responses: dict = Field(default_factory=dict)
+    submitted_at: datetime

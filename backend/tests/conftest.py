@@ -35,6 +35,8 @@ def _mongo_cleanup():
     cell_history = db["cell_history"]
     integration_events = db["integration_events"]
     users = db["users"]
+    intake_forms = db["intake_forms"]
+    intake_submissions = db["intake_submissions"]
 
     projects.delete_many({})
     tasks.delete_many({})
@@ -55,6 +57,8 @@ def _mongo_cleanup():
     cell_history.delete_many({})
     integration_events.delete_many({})
     users.delete_many({})
+    intake_forms.delete_many({})
+    intake_submissions.delete_many({})
     client.close()
 
 

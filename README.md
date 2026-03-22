@@ -46,6 +46,13 @@ Admin user management (requires Bearer token with `role: admin` — bootstrap `a
 - `PATCH /auth/admin/users/{user_id}` — update `email`, `role`, and/or `password`
 - `DELETE /auth/admin/users/{user_id}` — delete user (cannot delete yourself; cannot remove/demote the last DB admin)
 
+Intake forms (Gap 5 — each submission creates a **new task**):
+- `GET /projects/{project_id}/intake-forms` — list forms
+- `POST /projects/{project_id}/intake-forms` — create form (fields, `task_name_field`, optional mapping fields)
+- `GET/PATCH/DELETE /projects/{project_id}/intake-forms/{form_id}`
+- `GET /projects/{project_id}/intake-forms/{form_id}/submissions` — recent submissions (audit)
+- **Public (no auth):** `GET /intake/public/{slug}` — form schema; `POST /intake/public/{slug}/submit` — body `{ "responses": { "field_key": "..." } }`
+
 Bootstrap local admin login (if no registered user): `admin / admin123`  
 Override with env vars:
 - `APP_ADMIN_USERNAME`

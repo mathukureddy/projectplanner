@@ -534,6 +534,60 @@ async def test_auth_register_login_and_me():
 
 
 @pytest.mark.asyncio
+async def test_intake_form_public_submit_creates_task():
+    app = create_app()
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        p = await ac.post(
+            "/projects/",
+            json={
+                "name": "UT_Intake_" + __import__("uuid").uuid4().hex[:8],
+                "tasks": [{"name": "Seed"}],
+            },
+        )
+        assert p.status_code == 201
+        pid = p.json()["id"]
+
+        form_body = {
+            "name": "Bug report",
+            "enabled": True,
+            "fields": [
+                {"key": "title", "label": "Title", "type": "text", "required": True},
+                {"key": "details", "label": "Details", "type": "textarea", "required": False},
+            ],
+            "task_name_field": "title",
+            "task_description_field": "details",
+            "default_status": "Not Started",
+        }
+        fr = await ac.post(f"/projects/{pid}/intake-forms", json=form_body)
+        assert fr.status_code == 201
+        slug = fr.json()["slug"]
+        fid = fr.json()["id"]
+
+        pub = await ac.get(f"/intake/public/{slug}")
+        assert pub.status_code == 200
+        assert pub.json()["name"] == "Bug report"
+
+        sub = await ac.post(
+            f"/intake/public/{slug}/submit",
+            json={"responses": {"title": "Login broken", "details": "Cannot submit"}},
+        )
+        assert sub.status_code == 200
+        assert sub.json()["task_id"]
+
+        tasks = await ac.get("/tasks/", params={"project_id": pid})
+        assert any(t["name"] == "Login broken" for t in tasks.json())
+
+        subs = await ac.get(f"/projects/{pid}/intake-forms/{fid}/submissions")
+        assert subs.status_code == 200
+        assert len(subs.json()) >= 1
+
+        off = await ac.patch(f"/projects/{pid}/intake-forms/{fid}", json={"enabled": False})
+        assert off.status_code == 200
+        gone = await ac.get(f"/intake/public/{slug}")
+        assert gone.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_auth_bootstrap_admin_case_insensitive():
     app = create_app()
     async with AsyncClient(app=app, base_url="http://test") as ac:
