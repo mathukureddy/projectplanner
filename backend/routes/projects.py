@@ -168,7 +168,7 @@ def _normalize_project_integrations(doc: dict) -> None:
         if not isinstance(item, dict):
             continue
         itype = str(item.get("type") or "").strip().lower()
-        if itype not in ("webhook", "slack", "email"):
+        if itype not in ("webhook", "slack", "email", "jira"):
             continue
         out.append(
             {

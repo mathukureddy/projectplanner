@@ -274,6 +274,14 @@ export async function fetchIntegrationEvents(projectId, integrationType = "") {
   return res.data;
 }
 
+export async function importJiraIssues(projectId, jql = "", maxResults = 20) {
+  const res = await api.post(`/projects/${projectId}/integrations/jira/import`, {
+    jql,
+    max_results: maxResults,
+  });
+  return res.data;
+}
+
 export async function fetchIntakeForms(projectId) {
   const res = await api.get(`/projects/${projectId}/intake-forms`);
   return res.data;

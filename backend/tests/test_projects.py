@@ -920,3 +920,70 @@ async def test_collaboration_notifications_mentions_assignment_and_inbox():
         inbox_viewer = await ac.get("/alerts/inbox", params={"user_name": "viewer@example.com"})
         assert any(a.get("kind") == "share_added" for a in inbox_viewer.json())
 
+
+@pytest.mark.asyncio
+async def test_jira_integration_test_and_import_with_mock_issues():
+    app = create_app()
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        p = await ac.post(
+            "/projects/",
+            json={"name": "UT_Jira_" + __import__("uuid").uuid4().hex[:8], "tasks": [{"name": "Seed"}]},
+        )
+        assert p.status_code == 201
+        project_id = p.json()["id"]
+
+        cfg = await ac.patch(
+            f"/projects/{project_id}/integrations",
+            json={
+                "integrations": [
+                    {
+                        "type": "jira",
+                        "enabled": True,
+                        "endpoint": "https://example.atlassian.net",
+                        "secret": "token",
+                        "settings": {
+                            "jira_email": "jira-user@example.com",
+                            "jira_jql": "project = DEMO ORDER BY updated DESC",
+                            "mock_issues": [
+                                {
+                                    "key": "DEMO-1",
+                                    "fields": {
+                                        "summary": "Issue one",
+                                        "description": "Imported from Jira",
+                                        "status": {"name": "In Progress"},
+                                    },
+                                },
+                                {
+                                    "key": "DEMO-2",
+                                    "fields": {
+                                        "summary": "Issue two",
+                                        "status": {"name": "Done"},
+                                    },
+                                },
+                            ],
+                        },
+                    }
+                ]
+            },
+        )
+        assert cfg.status_code == 200
+
+        test_conn = await ac.post(
+            f"/projects/{project_id}/integrations/test",
+            json={"integration_type": "jira", "event_type": "manual_test"},
+        )
+        assert test_conn.status_code == 200
+
+        imp = await ac.post(
+            f"/projects/{project_id}/integrations/jira/import",
+            json={"jql": "project=DEMO", "max_results": 10},
+        )
+        assert imp.status_code == 200
+        assert imp.json()["created"] >= 2
+
+        tasks = await ac.get("/tasks/", params={"project_id": project_id})
+        assert tasks.status_code == 200
+        names = {t["name"] for t in tasks.json()}
+        assert "Issue one" in names
+        assert "Issue two" in names
+

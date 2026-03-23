@@ -120,7 +120,7 @@ class GovernancePolicy(BaseModel):
 
 
 class IntegrationConfig(BaseModel):
-    type: str  # webhook | slack | email
+    type: str  # webhook | slack | email | jira
     enabled: bool = True
     endpoint: Optional[str] = None
     secret: Optional[str] = None
