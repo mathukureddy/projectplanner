@@ -8,6 +8,7 @@ from pymongo.errors import PyMongoError
 from db import get_database, normalize_document, apply_status_completion_rules
 from models import BaselineSnapshotOut, Project, ProjectCreateWithTasks, ProjectUpdate
 from storage import UPLOAD_ROOT
+from notification_logic import create_user_notification
 
 
 router = APIRouter()
@@ -127,7 +128,13 @@ def _normalize_project_formulas(doc: dict) -> None:
 def _normalize_project_governance(doc: dict) -> None:
     raw = doc.get("governance")
     if not isinstance(raw, dict):
-        doc["governance"] = {"locked_fields": [], "restrict_locked_to_admin": True}
+        doc["governance"] = {
+            "locked_fields": [],
+            "restrict_locked_to_admin": True,
+            "required_fields": [],
+            "allowed_statuses": [],
+            "edit_window_days": None,
+        }
         return
     locked = raw.get("locked_fields") or []
     if not isinstance(locked, list):
@@ -135,6 +142,19 @@ def _normalize_project_governance(doc: dict) -> None:
     doc["governance"] = {
         "locked_fields": [str(x) for x in locked if str(x).strip()],
         "restrict_locked_to_admin": bool(raw.get("restrict_locked_to_admin", True)),
+        "required_fields": [
+            str(x).strip()
+            for x in (raw.get("required_fields") or [])
+            if str(x).strip()
+        ],
+        "allowed_statuses": [
+            str(x).strip()
+            for x in (raw.get("allowed_statuses") or [])
+            if str(x).strip()
+        ],
+        "edit_window_days": int(raw["edit_window_days"])
+        if isinstance(raw.get("edit_window_days"), int) and raw.get("edit_window_days") >= 0
+        else None,
     }
 
 
@@ -204,7 +224,16 @@ async def create_project(payload: ProjectCreateWithTasks) -> Project:
     doc = normalize_document(payload_data)
     doc.setdefault("shares", [])
     doc.setdefault("formulas", [])
-    doc.setdefault("governance", {"locked_fields": [], "restrict_locked_to_admin": True})
+    doc.setdefault(
+        "governance",
+        {
+            "locked_fields": [],
+            "restrict_locked_to_admin": True,
+            "required_fields": [],
+            "allowed_statuses": [],
+            "edit_window_days": None,
+        },
+    )
     doc.setdefault("integrations", [])
     doc.update({"created_at": now, "updated_at": now})
     try:
@@ -230,6 +259,24 @@ async def create_project(payload: ProjectCreateWithTasks) -> Project:
             # Best-effort rollback (transactions require replica set).
             await db["projects"].delete_one({"_id": result.inserted_id})
             raise
+
+        # Collaboration notifications: initial task assignment alerts.
+        try:
+            async for tdoc in db["tasks"].find({"project_id": project_id}):
+                assignee = tdoc.get("assigned_to")
+                if assignee:
+                    await create_user_notification(
+                        db,
+                        project_id=project_id,
+                        task_id=str(tdoc["_id"]),
+                        recipient_user=str(assignee),
+                        title="Task assigned",
+                        message=f'You were assigned task "{tdoc.get("name", "Task")}".',
+                        kind="task_assigned",
+                        dedupe_key={"task_id": str(tdoc["_id"])},
+                    )
+        except Exception:
+            pass
 
         created = await db["projects"].find_one({"_id": result.inserted_id})
     except PyMongoError as e:
@@ -264,6 +311,7 @@ async def update_project(project_id: str, payload: ProjectUpdate) -> Project:
             raise HTTPException(status_code=404, detail="Project not found")
         return _serialize_project(doc)
     updates["updated_at"] = datetime.utcnow()
+    old_doc = await db["projects"].find_one({"_id": oid}) or {}
     result = await db["projects"].find_one_and_update(
         {"_id": oid},
         {"$set": updates},
@@ -271,6 +319,33 @@ async def update_project(project_id: str, payload: ProjectUpdate) -> Project:
     )
     if not result:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    # Collaboration notifications: sharing updates can notify recipients.
+    try:
+        if "shares" in updates:
+            old_shares = old_doc.get("shares") or []
+            old_emails = {str(s.get("email", "")).strip().lower() for s in old_shares if isinstance(s, dict)}
+            new_shares = result.get("shares") or []
+            for s in new_shares:
+                if not isinstance(s, dict):
+                    continue
+                email = str(s.get("email", "")).strip()
+                if not email:
+                    continue
+                role = str(s.get("role") or "viewer")
+                if email.lower() not in old_emails:
+                    await create_user_notification(
+                        db,
+                        project_id=project_id,
+                        task_id=None,
+                        recipient_user=email,
+                        title="Project shared with you",
+                        message=f'You were added to project "{result.get("name", "Project")}" as {role}.',
+                        kind="share_added",
+                        dedupe_key={"recipient_user": email, "message": f'You were added to project "{result.get("name", "Project")}" as {role}.'},
+                    )
+    except Exception:
+        pass
     return _serialize_project(result)
 
 

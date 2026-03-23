@@ -14,10 +14,70 @@ from models import CellHistoryEntry, FormulaRule, GovernancePolicy
 router = APIRouter()
 
 
+def _to_num(v: Any) -> float:
+    if isinstance(v, bool):
+        return 1.0 if v else 0.0
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        try:
+            return float(v.strip())
+        except Exception:
+            return 0.0
+    return 0.0
+
+
+def _func_sum(*args):
+    return sum(_to_num(a) for a in args)
+
+
+def _func_avg(*args):
+    nums = [_to_num(a) for a in args]
+    return (sum(nums) / len(nums)) if nums else 0
+
+
+def _func_min(*args):
+    nums = [_to_num(a) for a in args]
+    return min(nums) if nums else 0
+
+
+def _func_max(*args):
+    nums = [_to_num(a) for a in args]
+    return max(nums) if nums else 0
+
+
+def _func_if(cond, a, b):
+    return a if bool(cond) else b
+
+
+def _func_countifs(*args):
+    # Simplified COUNTIFS for formula depth parity in MVP.
+    # Accepts condition flags and counts truthy entries.
+    return sum(1 for a in args if bool(a))
+
+
+SAFE_FUNCTIONS = {
+    "SUM": _func_sum,
+    "AVG": _func_avg,
+    "MIN": _func_min,
+    "MAX": _func_max,
+    "IF": _func_if,
+    "COUNTIFS": _func_countifs,
+    # Minimal aliases often used in spreadsheet formulas:
+    "VLOOKUP": lambda value, *_: value,
+    "INDEX": lambda seq, idx=0, *_: (seq[idx] if isinstance(seq, (list, tuple)) and isinstance(idx, int) and 0 <= idx < len(seq) else None),
+    "MATCH": lambda value, seq, *_: (seq.index(value) if isinstance(seq, list) and value in seq else -1),
+}
+
+
 def _safe_eval_formula(expr: str, context: dict[str, Any]) -> Any:
     """
     Very small arithmetic evaluator for formulas.
-    Allowed: +, -, *, /, parentheses, names from context.
+    Allowed:
+    - arithmetic +, -, *, /, **, parentheses
+    - comparisons and boolean ops
+    - names from context
+    - safe functions: SUM, AVG, MIN, MAX, IF, COUNTIFS, VLOOKUP, INDEX, MATCH
     """
     node = ast.parse(expr, mode="eval")
     allowed_nodes = (
@@ -34,13 +94,32 @@ def _safe_eval_formula(expr: str, context: dict[str, Any]) -> Any:
         ast.Load,
         ast.Constant,
         ast.Name,
+        ast.Call,
+        ast.Compare,
+        ast.Eq,
+        ast.NotEq,
+        ast.Lt,
+        ast.LtE,
+        ast.Gt,
+        ast.GtE,
+        ast.BoolOp,
+        ast.And,
+        ast.Or,
+        ast.IfExp,
+        ast.List,
+        ast.Tuple,
     )
     for n in ast.walk(node):
         if not isinstance(n, allowed_nodes):
             raise ValueError("Unsupported formula syntax")
-        if isinstance(n, ast.Name) and n.id not in context:
+        if isinstance(n, ast.Name) and n.id not in context and n.id not in SAFE_FUNCTIONS:
             raise ValueError(f"Unknown field '{n.id}'")
-    return eval(compile(node, "<formula>", "eval"), {"__builtins__": {}}, context)
+        if isinstance(n, ast.Call):
+            if not isinstance(n.func, ast.Name) or n.func.id not in SAFE_FUNCTIONS:
+                raise ValueError("Unsupported formula function")
+    eval_context = dict(context)
+    eval_context.update(SAFE_FUNCTIONS)
+    return eval(compile(node, "<formula>", "eval"), {"__builtins__": {}}, eval_context)
 
 
 async def _project_or_404(db, project_id: str) -> dict:
@@ -60,6 +139,21 @@ def _normalize_rule(rule: dict) -> Optional[dict]:
         return r.model_dump()
     except Exception:
         return None
+
+
+def _normalize_governance(raw: dict | None) -> GovernancePolicy:
+    raw = raw or {}
+    return GovernancePolicy(
+        locked_fields=[str(x).strip() for x in (raw.get("locked_fields") or []) if str(x).strip()],
+        restrict_locked_to_admin=bool(raw.get("restrict_locked_to_admin", True)),
+        required_fields=[str(x).strip() for x in (raw.get("required_fields") or []) if str(x).strip()],
+        allowed_statuses=[str(x).strip() for x in (raw.get("allowed_statuses") or []) if str(x).strip()],
+        edit_window_days=(
+            int(raw.get("edit_window_days"))
+            if isinstance(raw.get("edit_window_days"), int) and raw.get("edit_window_days") >= 0
+            else None
+        ),
+    )
 
 
 @router.get("/{project_id}/formulas", response_model=list[FormulaRule])
@@ -211,21 +305,17 @@ async def list_cell_history(
 async def get_governance(project_id: str) -> GovernancePolicy:
     db = get_database()
     project = await _project_or_404(db, project_id)
-    gov = project.get("governance") or {}
-    return GovernancePolicy(
-        locked_fields=[str(x) for x in (gov.get("locked_fields") or [])],
-        restrict_locked_to_admin=bool(gov.get("restrict_locked_to_admin", True)),
-    )
+    return _normalize_governance(project.get("governance"))
 
 
 @router.patch("/{project_id}/governance", response_model=GovernancePolicy)
 async def patch_governance(project_id: str, payload: GovernancePolicy) -> GovernancePolicy:
     db = get_database()
     await _project_or_404(db, project_id)
-    doc = payload.model_dump()
+    doc = _normalize_governance(payload.model_dump()).model_dump()
     await db["projects"].update_one(
         {"_id": ObjectId(project_id)},
         {"$set": {"governance": doc, "updated_at": datetime.utcnow()}},
     )
-    return payload
+    return GovernancePolicy(**doc)
 

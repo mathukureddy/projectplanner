@@ -674,3 +674,249 @@ async def test_admin_user_management_crud():
         listed2 = await ac.get("/auth/admin/users", headers=headers)
         assert len(listed2.json()) == 1
 
+
+@pytest.mark.asyncio
+async def test_resource_workload_report():
+    app = create_app()
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        p = await ac.post(
+            "/projects/",
+            json={
+                "name": "UT_Workload_" + __import__("uuid").uuid4().hex[:8],
+                "status": "On Track",
+                "tasks": [
+                    {
+                        "name": "A1",
+                        "assigned_to": "alice",
+                        "status": "In Progress",
+                        "start_date": "2026-03-01",
+                        "end_date": "2026-03-10",
+                    },
+                    {
+                        "name": "A2",
+                        "assigned_to": "alice",
+                        "status": "Not Started",
+                        "duration_days": 8,
+                    },
+                    {
+                        "name": "B1",
+                        "assigned_to": "bob",
+                        "status": "In Progress",
+                        "start_date": "2026-03-05",
+                        "end_date": "2026-03-06",
+                    },
+                    {
+                        "name": "C_done",
+                        "assigned_to": "charlie",
+                        "status": "Complete",
+                        "duration_days": 10,
+                    },
+                ],
+            },
+        )
+        assert p.status_code == 201
+        project_id = p.json()["id"]
+
+        rep = await ac.get(
+            "/reports/workload",
+            params={"project_id": project_id, "window_days": 7, "capacity_hours_per_day": 8},
+        )
+        assert rep.status_code == 200
+        body = rep.json()
+        assert body["scope"]["project_id"] == project_id
+        assert body["totals"]["assignee_count"] >= 2
+        by_name = {x["assignee"]: x for x in body["assignees"]}
+        assert "alice" in by_name
+        assert by_name["alice"]["active_task_count"] == 2
+        assert isinstance(by_name["alice"]["utilization_percent"], (int, float))
+
+
+@pytest.mark.asyncio
+async def test_resource_workload_settings_thresholds_and_trend():
+    app = create_app()
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        p = await ac.post(
+            "/projects/",
+            json={
+                "name": "UT_WorkloadCfg_" + __import__("uuid").uuid4().hex[:8],
+                "tasks": [
+                    {"name": "A", "assigned_to": "alice", "status": "In Progress", "duration_days": 10},
+                    {"name": "B", "assigned_to": "bob", "status": "In Progress", "duration_days": 1},
+                ],
+            },
+        )
+        assert p.status_code == 201
+        project_id = p.json()["id"]
+
+        role_set = await ac.put("/reports/workload/settings/roles/dev", params={"capacity_hours_per_day": 6})
+        assert role_set.status_code == 200
+        assignee_set = await ac.put(
+            "/reports/workload/settings/assignees/alice",
+            params={"capacity_hours_per_day": 4, "role": "dev"},
+        )
+        assert assignee_set.status_code == 200
+
+        rep = await ac.get(
+            "/reports/workload",
+            params={
+                "project_id": project_id,
+                "window_days": 7,
+                "capacity_hours_per_day": 8,
+                "overalloc_threshold_percent": 90,
+                "underalloc_threshold_percent": 30,
+            },
+        )
+        assert rep.status_code == 200
+        rows = {r["assignee"]: r for r in rep.json()["assignees"]}
+        assert rows["alice"]["capacity_hours_per_day"] == 4
+        assert rows["alice"]["role"] == "dev"
+        assert rows["alice"]["allocation_status"] in ("overallocated", "balanced", "underallocated")
+
+        trend = await ac.get("/reports/workload/trend", params={"project_id": project_id, "weeks": 4})
+        assert trend.status_code == 200
+        assert len(trend.json()["points"]) == 4
+
+
+@pytest.mark.asyncio
+async def test_formula_depth_functions_and_governance_depth():
+    app = create_app()
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        p = await ac.post(
+            "/projects/",
+            json={
+                "name": "UT_FormulaGovDepth_" + __import__("uuid").uuid4().hex[:8],
+                "tasks": [{"name": "T1", "percent_complete": 40, "duration_days": 4, "status": "Not Started"}],
+            },
+        )
+        assert p.status_code == 201
+        project_id = p.json()["id"]
+        task_id = (await ac.get("/tasks/", params={"project_id": project_id})).json()[0]["id"]
+
+        # Deeper governance policy.
+        gov = await ac.patch(
+            f"/projects/{project_id}/governance",
+            json={
+                "locked_fields": ["status"],
+                "restrict_locked_to_admin": True,
+                "required_fields": ["assigned_to"],
+                "allowed_statuses": ["Not Started", "In Progress", "Complete"],
+                "edit_window_days": None,
+            },
+        )
+        assert gov.status_code == 200
+        assert "assigned_to" in gov.json()["required_fields"]
+
+        blocked_required = await ac.patch(
+            f"/tasks/{task_id}",
+            json={"description": "x"},
+            headers={"x-user-role": "editor", "x-user-name": "alice"},
+        )
+        assert blocked_required.status_code == 400
+
+        ok_required = await ac.patch(
+            f"/tasks/{task_id}",
+            json={"assigned_to": "alice"},
+            headers={"x-user-role": "editor", "x-user-name": "alice"},
+        )
+        assert ok_required.status_code == 200
+
+        blocked_status = await ac.patch(
+            f"/tasks/{task_id}",
+            json={"status": "Blocked"},
+            headers={"x-user-role": "admin", "x-user-name": "admin"},
+        )
+        assert blocked_status.status_code == 400
+
+        # Formula function depth.
+        formulas = await ac.patch(
+            f"/projects/{project_id}/formulas",
+            json=[
+                {
+                    "name": "Math",
+                    "target_field": "duration_days",
+                    "expression": "MAX(3, percent_complete/10) + IF(percent_complete > 20, 1, 0)",
+                    "enabled": True,
+                }
+            ],
+        )
+        assert formulas.status_code == 200
+
+        ev = await ac.post(f"/projects/{project_id}/formulas/evaluate")
+        assert ev.status_code == 200
+        refreshed = await ac.get(f"/tasks/{task_id}")
+        assert refreshed.status_code == 200
+        assert refreshed.json()["duration_days"] >= 3
+
+
+@pytest.mark.asyncio
+async def test_templates_catalog_and_solution_set_project_creation():
+    app = create_app()
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        cat = await ac.get("/template/catalog")
+        assert cat.status_code == 200
+        assert len(cat.json()) >= 2
+        template_id = cat.json()[0]["id"]
+
+        create_one = await ac.post(
+            f"/template/catalog/{template_id}/create-project",
+            json={"name": "UT_TemplateOne_" + __import__("uuid").uuid4().hex[:8]},
+        )
+        assert create_one.status_code == 200
+        project_id = create_one.json()["project"]["id"]
+
+        tasks = await ac.get("/tasks/", params={"project_id": project_id})
+        assert tasks.status_code == 200
+        assert len(tasks.json()) >= 1
+
+        sets = await ac.get("/template/solution-sets")
+        assert sets.status_code == 200
+        sid = sets.json()[0]["id"]
+        create_set = await ac.post(
+            f"/template/solution-sets/{sid}/create-projects",
+            json={"name_prefix": "UT_Set_" + __import__("uuid").uuid4().hex[:6]},
+        )
+        assert create_set.status_code == 200
+        assert len(create_set.json()["created_projects"]) >= 1
+
+
+@pytest.mark.asyncio
+async def test_collaboration_notifications_mentions_assignment_and_inbox():
+    app = create_app()
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        p = await ac.post(
+            "/projects/",
+            json={
+                "name": "UT_CollabNotify_" + __import__("uuid").uuid4().hex[:8],
+                "tasks": [{"name": "Task1", "assigned_to": "alice"}],
+            },
+        )
+        assert p.status_code == 201
+        project_id = p.json()["id"]
+        task_id = (await ac.get("/tasks/", params={"project_id": project_id})).json()[0]["id"]
+
+        # Assignment notification (create path)
+        inbox_alice = await ac.get("/alerts/inbox", params={"user_name": "alice"})
+        assert inbox_alice.status_code == 200
+        assert any(a.get("kind") == "task_assigned" for a in inbox_alice.json())
+
+        # Mention notification
+        c = await ac.post(
+            f"/comments/?project_id={project_id}",
+            json={"task_id": task_id, "author": "bob", "body": "Please check this @alice and @charlie"},
+        )
+        assert c.status_code == 201
+
+        inbox_alice_2 = await ac.get("/alerts/inbox", params={"user_name": "alice"})
+        assert any(a.get("kind") == "comment_mention" for a in inbox_alice_2.json())
+        inbox_charlie = await ac.get("/alerts/inbox", params={"user_name": "charlie"})
+        assert any(a.get("kind") == "comment_mention" for a in inbox_charlie.json())
+
+        # Sharing notification
+        up = await ac.patch(
+            f"/projects/{project_id}",
+            json={"shares": [{"email": "viewer@example.com", "role": "viewer"}]},
+        )
+        assert up.status_code == 200
+        inbox_viewer = await ac.get("/alerts/inbox", params={"user_name": "viewer@example.com"})
+        assert any(a.get("kind") == "share_added" for a in inbox_viewer.json())
+

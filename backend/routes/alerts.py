@@ -29,6 +29,7 @@ async def _project_exists(db, project_id: str) -> bool:
 async def list_alerts(
     project_id: str = Query(...),
     unread_only: bool = Query(False),
+    recipient_user: str = Query(default=""),
 ) -> list[Alert]:
     db = get_database()
     if not await _project_exists(db, project_id):
@@ -36,6 +37,8 @@ async def list_alerts(
     q: dict = {"project_id": project_id}
     if unread_only:
         q["read"] = False
+    if recipient_user.strip():
+        q["recipient_user"] = recipient_user.strip()
     out: list[Alert] = []
     async for doc in db["alerts"].find(q).sort("created_at", -1).limit(200):
         out.append(_serialize_alert(doc))
@@ -85,6 +88,7 @@ async def create_user_alert(payload: UserAlertCreate) -> Alert:
         "severity": "info",
         "read": False,
         "kind": "user",
+        "recipient_user": payload.recipient_user.strip() if payload.recipient_user else None,
         "created_at": now,
     }
     try:
@@ -93,6 +97,21 @@ async def create_user_alert(payload: UserAlertCreate) -> Alert:
     except PyMongoError as e:
         raise HTTPException(status_code=503, detail=f"Database unavailable: {e.__class__.__name__}")
     return _serialize_alert(created)
+
+
+@router.get("/inbox", response_model=list[Alert])
+async def inbox_alerts(
+    user_name: str = Query(..., min_length=1),
+    unread_only: bool = Query(False),
+) -> list[Alert]:
+    db = get_database()
+    q: dict = {"recipient_user": user_name.strip()}
+    if unread_only:
+        q["read"] = False
+    out: list[Alert] = []
+    async for doc in db["alerts"].find(q).sort("created_at", -1).limit(300):
+        out.append(_serialize_alert(doc))
+    return out
 
 
 def _task_end_date_as_date(end_val):

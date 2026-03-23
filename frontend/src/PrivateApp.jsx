@@ -9,13 +9,16 @@ import AlertsPage from "./pages/AlertsPage.jsx";
 import SharingPermissionsPage from "./pages/SharingPermissionsPage.jsx";
 import IntegrationsPage from "./pages/IntegrationsPage.jsx";
 import IntakeFormsPage from "./pages/IntakeFormsPage.jsx";
+import WorkloadPage from "./pages/WorkloadPage.jsx";
+import TemplatesPage from "./pages/TemplatesPage.jsx";
 import AdminUsersPage from "./pages/AdminUsersPage.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
-import { fetchMe } from "./api";
+import { fetchInboxAlerts, fetchMe } from "./api";
 
 export default function PrivateApp() {
   const [authLoading, setAuthLoading] = useState(true);
   const [user, setUser] = useState(null);
+  const [unreadInboxCount, setUnreadInboxCount] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -35,6 +38,28 @@ export default function PrivateApp() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (!user?.username) {
+      setUnreadInboxCount(0);
+      return;
+    }
+    let active = true;
+    const loadUnread = async () => {
+      try {
+        const alerts = await fetchInboxAlerts(user.username, true);
+        if (active) setUnreadInboxCount(Array.isArray(alerts) ? alerts.length : 0);
+      } catch {
+        if (active) setUnreadInboxCount(0);
+      }
+    };
+    loadUnread();
+    const t = setInterval(loadUnread, 30000);
+    return () => {
+      active = false;
+      clearInterval(t);
+    };
+  }, [user?.username]);
 
   const handleLogout = () => {
     localStorage.removeItem("pp_auth_token");
@@ -57,12 +82,32 @@ export default function PrivateApp() {
           <div className="side-submenu">
             <NavLink to="/automation-rules">Automation Rules</NavLink>
             <NavLink to="/data-formulas">Data Formulas</NavLink>
-            <NavLink to="/alerts-center">Alerts</NavLink>
+            <NavLink to="/alerts-center">
+              Alerts
+              {unreadInboxCount > 0 ? (
+                <span
+                  style={{
+                    marginLeft: "0.45rem",
+                    background: "#ef4444",
+                    color: "#fff",
+                    borderRadius: "999px",
+                    padding: "0.05rem 0.45rem",
+                    fontSize: "0.74rem",
+                    fontWeight: 700,
+                    verticalAlign: "middle",
+                  }}
+                >
+                  {unreadInboxCount}
+                </span>
+              ) : null}
+            </NavLink>
             <NavLink to="/sharing-permissions">Sharing & Permissions</NavLink>
             <NavLink to="/integrations">Integrations</NavLink>
             <NavLink to="/intake-forms">Intake forms</NavLink>
+            <NavLink to="/templates">Templates</NavLink>
           </div>
           <NavLink to="/dashboard">Dashboard</NavLink>
+          <NavLink to="/workload">Workload</NavLink>
           {String(user.role || "").toLowerCase() === "admin" ? (
             <NavLink to="/admin/users">Users (admin)</NavLink>
           ) : null}
@@ -81,6 +126,8 @@ export default function PrivateApp() {
           <Route path="/sharing-permissions" element={<SharingPermissionsPage />} />
           <Route path="/integrations" element={<IntegrationsPage />} />
           <Route path="/intake-forms" element={<IntakeFormsPage />} />
+          <Route path="/templates" element={<TemplatesPage />} />
+          <Route path="/workload" element={<WorkloadPage />} />
           <Route path="/admin/users" element={<AdminUsersPage currentUser={user} />} />
           <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

@@ -151,6 +151,20 @@ export async function fetchAlerts(projectId, unreadOnly = false) {
   return res.data;
 }
 
+export async function fetchAlertsForRecipient(projectId, recipientUser, unreadOnly = false) {
+  const res = await api.get(`/alerts/`, {
+    params: { project_id: projectId, recipient_user: recipientUser, unread_only: unreadOnly },
+  });
+  return res.data;
+}
+
+export async function fetchInboxAlerts(userName, unreadOnly = false) {
+  const res = await api.get(`/alerts/inbox`, {
+    params: { user_name: userName, unread_only: unreadOnly },
+  });
+  return res.data;
+}
+
 export async function markAlertRead(projectId, alertId, read = true) {
   const res = await api.patch(`/alerts/${alertId}`, { read }, { params: { project_id: projectId } });
   return res.data;
@@ -291,5 +305,79 @@ export async function fetchPublicIntakeForm(slug) {
 
 export async function submitPublicIntakeForm(slug, responses) {
   const res = await api.post(`/intake/public/${slug}/submit`, { responses });
+  return res.data;
+}
+
+export async function fetchWorkloadReport(
+  projectId = "",
+  windowDays = 14,
+  capacityHoursPerDay = 8,
+  overallocThresholdPercent = 100,
+  underallocThresholdPercent = 60
+) {
+  const params = {
+    window_days: windowDays,
+    capacity_hours_per_day: capacityHoursPerDay,
+    overalloc_threshold_percent: overallocThresholdPercent,
+    underalloc_threshold_percent: underallocThresholdPercent,
+  };
+  if (projectId) params.project_id = projectId;
+  const res = await api.get("/reports/workload", { params });
+  return res.data;
+}
+
+export async function fetchWorkloadSettings() {
+  const res = await api.get("/reports/workload/settings");
+  return res.data;
+}
+
+export async function setAssigneeCapacity(assignee, capacityHoursPerDay, role = "") {
+  const res = await api.put(`/reports/workload/settings/assignees/${encodeURIComponent(assignee)}`, null, {
+    params: { capacity_hours_per_day: capacityHoursPerDay, ...(role ? { role } : {}) },
+  });
+  return res.data;
+}
+
+export async function deleteAssigneeCapacity(assignee) {
+  const res = await api.delete(`/reports/workload/settings/assignees/${encodeURIComponent(assignee)}`);
+  return res.data;
+}
+
+export async function setRoleCapacity(role, capacityHoursPerDay) {
+  const res = await api.put(`/reports/workload/settings/roles/${encodeURIComponent(role)}`, null, {
+    params: { capacity_hours_per_day: capacityHoursPerDay },
+  });
+  return res.data;
+}
+
+export async function deleteRoleCapacity(role) {
+  const res = await api.delete(`/reports/workload/settings/roles/${encodeURIComponent(role)}`);
+  return res.data;
+}
+
+export async function fetchWorkloadTrend(projectId = "", weeks = 8, capacityHoursPerDay = 8) {
+  const params = { weeks, capacity_hours_per_day: capacityHoursPerDay };
+  if (projectId) params.project_id = projectId;
+  const res = await api.get("/reports/workload/trend", { params });
+  return res.data;
+}
+
+export async function fetchTemplateCatalog() {
+  const res = await api.get("/template/catalog");
+  return res.data;
+}
+
+export async function fetchTemplateSolutionSets() {
+  const res = await api.get("/template/solution-sets");
+  return res.data;
+}
+
+export async function createProjectFromTemplate(templateId, name) {
+  const res = await api.post(`/template/catalog/${templateId}/create-project`, { name });
+  return res.data;
+}
+
+export async function createProjectsFromSolutionSet(solutionSetId, namePrefix) {
+  const res = await api.post(`/template/solution-sets/${solutionSetId}/create-projects`, { name_prefix: namePrefix });
   return res.data;
 }

@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import asyncio
 
-from routes import alerts, attachments, comments, projects, tasks, template, automations, reports, data_features, integrations, auth, intake_forms
+from routes import alerts, attachments, comments, projects, tasks, template, automations, reports, data_features, integrations, auth, intake_forms, workload
 from automation_scheduler import scheduler_enabled, start_overdue_scheduler
 
 
@@ -34,6 +34,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router, prefix="/auth", tags=["auth"])
     app.include_router(intake_forms.router, prefix="/projects", tags=["intake-forms"])
     app.include_router(intake_forms.public_router, prefix="/intake", tags=["intake-forms-public"])
+    app.include_router(workload.router, prefix="/reports", tags=["workload"])
 
     if scheduler_enabled():
         @app.on_event("startup")

@@ -13,8 +13,17 @@ export default function DataFormulasPage() {
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState("");
   const [formulas, setFormulas] = useState([]);
-  const [governance, setGovernance] = useState({ locked_fields: [], restrict_locked_to_admin: true });
+  const [governance, setGovernance] = useState({
+    locked_fields: [],
+    restrict_locked_to_admin: true,
+    required_fields: [],
+    allowed_statuses: [],
+    edit_window_days: null,
+  });
   const [lockedFieldsText, setLockedFieldsText] = useState("");
+  const [requiredFieldsText, setRequiredFieldsText] = useState("");
+  const [allowedStatusesText, setAllowedStatusesText] = useState("");
+  const [editWindowDaysText, setEditWindowDaysText] = useState("");
   const [history, setHistory] = useState([]);
   const [newName, setNewName] = useState("");
   const [newTarget, setNewTarget] = useState("percent_complete");
@@ -39,6 +48,11 @@ export default function DataFormulasPage() {
       setFormulas(f);
       setGovernance(g);
       setLockedFieldsText((g.locked_fields || []).join(", "));
+      setRequiredFieldsText((g.required_fields || []).join(", "));
+      setAllowedStatusesText((g.allowed_statuses || []).join(", "));
+      setEditWindowDaysText(
+        g.edit_window_days === null || g.edit_window_days === undefined ? "" : String(g.edit_window_days)
+      );
       setHistory(h);
     })();
   }, [projectId]);
@@ -47,6 +61,9 @@ export default function DataFormulasPage() {
     const gov = {
       ...governance,
       locked_fields: lockedFieldsText.split(",").map((s) => s.trim()).filter(Boolean),
+      required_fields: requiredFieldsText.split(",").map((s) => s.trim()).filter(Boolean),
+      allowed_statuses: allowedStatusesText.split(",").map((s) => s.trim()).filter(Boolean),
+      edit_window_days: editWindowDaysText.trim() === "" ? null : Number(editWindowDaysText),
     };
     await Promise.all([
       updateProjectFormulas(projectId, formulas),
@@ -124,6 +141,32 @@ export default function DataFormulasPage() {
           onChange={(e) => setLockedFieldsText(e.target.value)}
           style={{ minWidth: "24rem" }}
         />
+        <div style={{ marginTop: "0.5rem" }}>
+          <input
+            placeholder="Required fields comma-separated"
+            value={requiredFieldsText}
+            onChange={(e) => setRequiredFieldsText(e.target.value)}
+            style={{ minWidth: "24rem" }}
+          />
+        </div>
+        <div style={{ marginTop: "0.5rem" }}>
+          <input
+            placeholder="Allowed statuses comma-separated (optional)"
+            value={allowedStatusesText}
+            onChange={(e) => setAllowedStatusesText(e.target.value)}
+            style={{ minWidth: "24rem" }}
+          />
+        </div>
+        <div style={{ marginTop: "0.5rem" }}>
+          <input
+            type="number"
+            min={0}
+            placeholder="Edit window days (blank = no limit)"
+            value={editWindowDaysText}
+            onChange={(e) => setEditWindowDaysText(e.target.value)}
+            style={{ width: "18rem" }}
+          />
+        </div>
         <div style={{ marginTop: "0.5rem" }}>
           <label>
             <input

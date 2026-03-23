@@ -6,6 +6,7 @@ from pymongo.errors import PyMongoError
 
 from db import get_database
 from models import Comment, CommentCreate
+from notification_logic import create_user_notification, extract_mentions
 
 router = APIRouter()
 
@@ -57,6 +58,23 @@ async def create_comment(payload: CommentCreate, project_id: str = Query(...)) -
         created = await db["comments"].find_one({"_id": result.inserted_id})
     except PyMongoError as e:
         raise HTTPException(status_code=503, detail=f"Database unavailable: {e.__class__.__name__}")
+
+    # Collaboration notifications: @mentions in comments create recipient-targeted alerts.
+    try:
+        mentions = [u for u in extract_mentions(payload.body) if u.lower() != payload.author.strip().lower()]
+        for username in mentions:
+            await create_user_notification(
+                db,
+                project_id=project_id,
+                task_id=payload.task_id,
+                recipient_user=username,
+                title=f"Mentioned by {payload.author}",
+                message=f'You were mentioned in a comment: "{payload.body}"',
+                kind="comment_mention",
+                dedupe_key={"task_id": payload.task_id, "message": f'You were mentioned in a comment: "{payload.body}"'},
+            )
+    except Exception:
+        pass
     return _serialize_comment(created)
 
 

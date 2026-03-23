@@ -9,6 +9,7 @@ from db import get_database, normalize_document, apply_status_completion_rules
 from models import Task, TaskCreate, TaskUpdate
 from automation_logic import is_automation_enabled, scan_completed_alerts
 from integration_events import emit_integration_events
+from notification_logic import create_user_notification
 
 
 router = APIRouter()
@@ -335,6 +336,22 @@ async def create_task_document(db, payload: TaskCreate) -> Task:
     project_docs = _apply_hierarchy_rollups(project_docs)
     project_docs = _apply_critical_path_metrics(project_docs)
     mapped = {str(t["_id"]): t for t in project_docs}
+    # Collaboration notifications: assignee receives task-assigned alert.
+    try:
+        assignee = (created or {}).get("assigned_to")
+        if assignee:
+            await create_user_notification(
+                db,
+                project_id=payload.project_id,
+                task_id=str(created["_id"]),
+                recipient_user=str(assignee),
+                title="Task assigned",
+                message=f'You were assigned task "{(created or {}).get("name", "Task")}".',
+                kind="task_assigned",
+                dedupe_key={"task_id": str(created["_id"])},
+            )
+    except Exception:
+        pass
     return _serialize_task(mapped[str(created["_id"])])
 
 
@@ -379,6 +396,8 @@ async def update_task(
     )
     old_status = current.get("status")
     new_status = updates.get("status", old_status)
+    old_assignee = current.get("assigned_to")
+    new_assignee = updates.get("assigned_to", old_assignee)
     if "parent_task_id" in updates:
         updates["parent_task_id"] = _ref_id_to_str(updates.get("parent_task_id"))
     if "predecessors" in updates and updates["predecessors"] is not None:
@@ -390,12 +409,46 @@ async def update_task(
     governance = project_doc.get("governance") or {}
     locked_fields = set(governance.get("locked_fields") or [])
     restrict_locked = bool(governance.get("restrict_locked_to_admin", True))
+    required_fields = [str(x).strip() for x in (governance.get("required_fields") or []) if str(x).strip()]
+    allowed_statuses = [str(x).strip() for x in (governance.get("allowed_statuses") or []) if str(x).strip()]
+    edit_window_days = governance.get("edit_window_days")
     changed_locked = sorted(k for k in updates.keys() if k in locked_fields)
     if changed_locked and restrict_locked and str(x_user_role).lower() != "admin":
         raise HTTPException(
             status_code=403,
             detail=f"Governance: locked fields require admin role: {', '.join(changed_locked)}",
         )
+    if allowed_statuses:
+        candidate_status = updates.get("status", current.get("status"))
+        if candidate_status not in allowed_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Governance: status must be one of {allowed_statuses}",
+            )
+    if isinstance(edit_window_days, int) and edit_window_days >= 0 and str(x_user_role).lower() != "admin":
+        start_dt = current.get("start_date")
+        if hasattr(start_dt, "date"):
+            age_days = (datetime.utcnow().date() - start_dt.date()).days
+            if age_days > edit_window_days:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Governance: task is outside editable window ({edit_window_days} days)",
+                )
+
+    # Validate required fields after applying candidate updates (except admin bypass).
+    if required_fields and str(x_user_role).lower() != "admin":
+        candidate = dict(current)
+        candidate.update(updates)
+        missing = []
+        for f in required_fields:
+            v = candidate.get(f)
+            if v is None or (isinstance(v, str) and not v.strip()):
+                missing.append(f)
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Governance: required fields missing: {', '.join(missing)}",
+            )
     if "parent_task_id" in updates:
         await _validate_parent_task(
             db,
@@ -461,6 +514,22 @@ async def update_task(
                     "changed_at": datetime.utcnow(),
                 }
             )
+
+    # Collaboration notifications: notify on assignee changes.
+    try:
+        if new_assignee and str(new_assignee).strip() and str(new_assignee).strip() != str(old_assignee or "").strip():
+            await create_user_notification(
+                db,
+                project_id=current["project_id"],
+                task_id=task_id,
+                recipient_user=str(new_assignee).strip(),
+                title="Task assignment updated",
+                message=f'You were assigned task "{current.get("name", "Task")}".',
+                kind="task_assigned",
+                dedupe_key={"task_id": task_id, "recipient_user": str(new_assignee).strip()},
+            )
+    except Exception:
+        pass
 
     project_docs = []
     async for tdoc in db["tasks"].find({"project_id": current["project_id"]}):

@@ -114,6 +114,9 @@ class FormulaRule(BaseModel):
 class GovernancePolicy(BaseModel):
     locked_fields: List[str] = Field(default_factory=list)
     restrict_locked_to_admin: bool = True
+    required_fields: List[str] = Field(default_factory=list)
+    allowed_statuses: List[str] = Field(default_factory=list)
+    edit_window_days: Optional[int] = None
 
 
 class IntegrationConfig(BaseModel):
@@ -200,6 +203,7 @@ class Alert(BaseModel):
     severity: str = "info"
     read: bool = False
     kind: str = "user"
+    recipient_user: Optional[str] = None
     created_at: datetime
 
 
@@ -212,6 +216,7 @@ class UserAlertCreate(BaseModel):
     title: str = Field(..., max_length=200)
     message: str = Field(..., max_length=2000)
     task_id: Optional[str] = None
+    recipient_user: Optional[str] = None
 
 
 class BaselineSnapshotOut(BaseModel):

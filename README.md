@@ -53,6 +53,12 @@ Intake forms (Gap 5 — each submission creates a **new task**):
 - `GET /projects/{project_id}/intake-forms/{form_id}/submissions` — recent submissions (audit)
 - **Public (no auth):** `GET /intake/public/{slug}` — form schema; `POST /intake/public/{slug}/submit` — body `{ "responses": { "field_key": "..." } }`
 
+Templates & solution sets (Gap 10):
+- `GET /template/catalog` — built-in template catalog (Project Plan, Agile, Marketing, IT intake)
+- `GET /template/solution-sets` — grouped template bundles (e.g., PMO starter)
+- `POST /template/catalog/{template_id}/create-project` with `{ "name": "..." }`
+- `POST /template/solution-sets/{solution_set_id}/create-projects` with `{ "name_prefix": "..." }`
+
 Bootstrap local admin login (if no registered user): `admin / admin123`  
 Override with env vars:
 - `APP_ADMIN_USERNAME`
